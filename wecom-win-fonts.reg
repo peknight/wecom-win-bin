@@ -1,0 +1,39 @@
+Windows Registry Editor Version 5.00
+
+; GDI 侧的中文回退：主界面走 GDI，靠这些替换拿到文泉驿。
+; CEF 走 DirectWrite，不吃这张表，那部分靠 Fonts 目录里的 Tahoma（见 PITFALLS.md）。
+[HKEY_CURRENT_USER\Software\Wine\Fonts\Replacements]
+"Arial"="WenQuanYi Micro Hei"
+"Arial Black"="WenQuanYi Micro Hei"
+"Calibri"="WenQuanYi Micro Hei"
+"DengXian"="WenQuanYi Micro Hei"
+"DFKai-SB"="WenQuanYi Micro Hei"
+"FangSong"="WenQuanYi Micro Hei"
+"KaiTi"="WenQuanYi Micro Hei"
+"Meiryo"="WenQuanYi Micro Hei"
+"Meiryo UI"="WenQuanYi Micro Hei"
+"Microsoft JhengHei"="WenQuanYi Micro Hei"
+"Microsoft JhengHei UI"="WenQuanYi Micro Hei"
+"Microsoft Sans Serif"="WenQuanYi Micro Hei"
+"Microsoft YaHei"="WenQuanYi Micro Hei"
+"Microsoft YaHei UI"="WenQuanYi Micro Hei"
+"MingLiU"="WenQuanYi Micro Hei"
+"NSimSun"="WenQuanYi Micro Hei"
+"PMingLiU"="WenQuanYi Micro Hei"
+"Segoe UI"="WenQuanYi Micro Hei"
+"SimHei"="WenQuanYi Micro Hei"
+"SimKai"="WenQuanYi Micro Hei"
+"SimSun"="WenQuanYi Micro Hei"
+"System"="WenQuanYi Micro Hei"
+"Tencent Sans"="WenQuanYi Micro Hei"
+"TencentSans"="WenQuanYi Micro Hei"
+"TencentSans W7"="WenQuanYi Micro Hei"
+"Verdana"="WenQuanYi Micro Hei"
+
+[HKEY_LOCAL_MACHINE\Software\Microsoft\Windows NT\CurrentVersion\Fonts]
+"Tahoma (TrueType)"="C:\\windows\\Fonts\\tahoma.ttf"
+"Tahoma Bold (TrueType)"="C:\\windows\\Fonts\\tahomabd.ttf"
+
+[HKEY_LOCAL_MACHINE\Software\Wow6432Node\Microsoft\Windows NT\CurrentVersion\Fonts]
+"Tahoma (TrueType)"="C:\\windows\\Fonts\\tahoma.ttf"
+"Tahoma Bold (TrueType)"="C:\\windows\\Fonts\\tahomabd.ttf"

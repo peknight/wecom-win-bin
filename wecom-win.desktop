@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=WeCom (Windows)
+Name[zh_CN]=企业微信 (Windows)
+Comment=Tencent WeCom Windows build running on deepin-wine
+Comment[zh_CN]=通过 deepin-wine 运行的企业微信 Windows 客户端
+Exec=wecom-win %u
+Icon=wecom-win-bin
+Terminal=false
+Categories=Network;InstantMessaging;Chat;
+# 窗口真实的 WM_CLASS（由启动器的 WINE_WMCLASS 决定），桌面环境靠它归组
+StartupWMClass=wecom-win
+StartupNotify=true
