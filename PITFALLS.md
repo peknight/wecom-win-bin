@@ -77,18 +77,22 @@ DirectWrite 会把字体重新组织成 `Tahoma / Regular` 两个独立族，和
 
 prefix 整体会比这大：CEF 缓存、日志都在里面，跑几天后 3~4G 是正常水位。
 
-## 3. `WINEPREDLL` 不能省
+## 3. 不需要 `WINEPREDLL`
 
-启动时必须导出：
+早期拿裸 prefix 试装时，直接跑 exe 起不来，当时是靠 deepin deb 包里的那套补丁
+dll 才启动成功的：
 
 ```bash
-WINEDLLPATH=/opt/deepin-wine10-stable/lib:/opt/deepin-wine10-stable/lib64
-WINEPREDLL=/opt/apps/com.qq.weixin.work.deepin/files/dlls
+WINEPREDLL=/opt/apps/com.qq.weixin.work.deepin/files/dlls   # 现在不需要
 ```
 
-`WINEPREDLL` 指向 deepin 那套打过补丁的 dll（ntdll、winex11.drv、user32 等）。
-裸的 deepin-wine10 跑这个 exe 跑不起来。这也是本包为什么依赖
-`com.qq.weixin.work.deepin` 却不使用它的 wine 与程序文件。
+那套 dll 里有打过补丁的 ntdll/winex11.drv/user32 等。后来用本包的默认 prefix
+（`wineboot -u` + NSIS 静默安装 + 字体补丁）重做了一遍，去掉 `WINEPREDLL` 也能
+正常启动、登录、收发消息，所以 1.0.0 从 `pkgrel=2` 起不再导出它，也不再依赖
+`com.qq.weixin.work.deepin`。
+
+推测当初起不来是 prefix 初始化方式的问题（没跑 `wineboot`、缺组件），不是 exe
+真的需要那套补丁 dll。如果以后换 wine 版本又出现起不来，先回头看这个变量。
 
 ## 4. `WINE_WMCLASS` 决定 `wecom-x11-fix` 能不能认出窗口
 

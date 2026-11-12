@@ -7,7 +7,6 @@ readonly PKGVER='@PKGVER@'
 readonly SHARE="/usr/share/${PKGNAME}"
 readonly WINE_ROOT='/opt/deepin-wine10-stable'
 readonly WINE_BIN="${WINE_ROOT}/bin/wine"
-readonly PREDLL='/opt/apps/com.qq.weixin.work.deepin/files/dlls'
 readonly SETUP_EXE="${SHARE}/WeCom_${PKGVER}.exe"
 readonly FONTS_REG="${SHARE}/wecom-win-fonts.reg"
 readonly WIN_APP_DIR='Program Files (x86)/WXWork'
@@ -58,7 +57,6 @@ resolve_prefix() {
 setup_wine_env() {
 	export WINEPREFIX="$1"
 	export WINEDLLPATH="${WINE_ROOT}/lib:${WINE_ROOT}/lib64"
-	export WINEPREDLL="${PREDLL}"
 	# 窗口的 WM_CLASS。刻意不用 com.qq.weixin.work.deepin：那是 deepin deb 那条
 	# 线路的标识，两条线路的窗口要能分开看。wecom-x11-fix 1.0.0-2 起同时认这两个值。
 	export WINE_WMCLASS='wecom-win'

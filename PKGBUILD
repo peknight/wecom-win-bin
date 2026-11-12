@@ -2,7 +2,7 @@
 
 pkgname=wecom-win-bin
 pkgver=5.0.13.6005
-pkgrel=1
+pkgrel=2
 pkgdesc='企业微信 Windows 客户端，基于 deepin-wine10 运行 | Tencent WeCom Windows build on deepin-wine'
 arch=('x86_64')
 url='https://work.weixin.qq.com/'
@@ -11,7 +11,6 @@ options=(!debug !strip)
 
 depends=(
     'deepin-wine10-stable'
-    'com.qq.weixin.work.deepin'  # 提供 WINEPREDLL 用的 deepin 补丁 dll
     'fontconfig'
     'hicolor-icon-theme'
 )

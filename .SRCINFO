@@ -1,7 +1,7 @@
 pkgbase = wecom-win-bin
 	pkgdesc = 企业微信 Windows 客户端，基于 deepin-wine10 运行 | Tencent WeCom Windows build on deepin-wine
 	pkgver = 5.0.13.6005
-	pkgrel = 1
+	pkgrel = 2
 	url = https://work.weixin.qq.com/
 	arch = x86_64
 	license = LicenseRef-proprietary
@@ -9,7 +9,6 @@ pkgbase = wecom-win-bin
 	makedepends = python-fonttools
 	makedepends = wqy-microhei
 	depends = deepin-wine10-stable
-	depends = com.qq.weixin.work.deepin
 	depends = fontconfig
 	depends = hicolor-icon-theme
 	optdepends = wecom-x11-fix: 修复窗口按钮穿透与拖动时的白边残留

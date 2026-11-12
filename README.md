@@ -64,9 +64,9 @@ wecom-win --remote-debugging-port=9222 --remote-allow-origins='*'
 
 ## 依赖关系
 
-本包依赖 `com.qq.weixin.work.deepin`，但只用它提供的那套 deepin 补丁 dll
-（`WINEPREDLL`，含打过补丁的 ntdll/winex11.drv/user32 等）。这是 Windows 版能
-在这套 wine 上跑起来的前提。它的 wine 本体和程序文件都用不上。
+只依赖 `deepin-wine10-stable`。早期版本借过 `com.qq.weixin.work.deepin` 里那套
+deepin 补丁 dll（`WINEPREDLL`），实测默认 prefix 不需要，所以 1.0.0-2 起已经不
+依赖旧包，装本包不必留着 deepin deb 版企业微信。
 
 注意：AUR 的 `wecom-bin`（腾讯 Linux 原生版）声明了
 `conflicts=('com.qq.weixin.work.deepin')`，两者不能共存。想装本包就得先卸掉
