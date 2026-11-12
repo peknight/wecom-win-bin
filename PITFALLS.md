@@ -158,3 +158,30 @@ stack 里压在所属窗口之上的窗口裁掉 bounding + input，弹窗关掉
 顺带一条经验：如果调试时把形状裁成空又没恢复（比如 daemon 被 kill -9），
 按钮会彻底消失；新版本把“bounding 为空”当成未裁形状处理，重启 daemon 即可
 恢复。
+
+## 9. 从 deepin deb 版迁移的顺序不能反
+
+`pkgrel=1` 时本包依赖 `com.qq.weixin.work.deepin`，所以**必须先升到 `-2`
+再卸旧包**。顺序反了，`pacman -Rns com.qq.weixin.work.deepin` 会把本包当孤儿
+一起带走，连带 prefix 之外的东西全清掉。`-2` 起没有这个依赖，先卸后装都行。
+
+旧包自己的依赖栈也是白占地方：`spark-dwine-helper` 会再拉
+`deepin-wine8-stable`（326M）。卸完旧包可以把这两个也删了，`deepin-wine10-stable`
+要留着，本包在用它。
+
+旧版的 prefix 在 `~/.deepinwine/com.qq.weixin.work.deepin`，和本包的
+`~/.local/share/wineprefixes/wecom-win` 完全独立，可以直接删；删之前确认没有
+残留 wine 进程还开着那个目录。`~/.deepinwine/Deepin-WXWork` 是更早的 deepin
+prefix 名，同理。
+
+最后一条：面板上钉的 `com.qq.weixin.work.deepin.desktop` 卸包后会变成死图标，
+要重新钉 `wecom-win-bin.desktop`。
+
+## 10. CEF 日志里的 ERROR 是噪音
+
+启动后 stderr 会刷一片
+`ERROR:navigation_request.cc(...)] NavigationRequest::ShareSameRenderProcess`，
+每次启动都有，和登录态、渲染、崩溃都无关，不影响使用。
+
+启动器已经导出了 `WINEDEBUG=-all` 压掉 wine 自己的调试输出；CEF 这部分是程序
+自身日志，压不掉，排查问题时直接忽略即可。
