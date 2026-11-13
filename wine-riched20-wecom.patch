@@ -16,9 +16,197 @@
    }
  
    extent = reo->sizel;
+--- a/dlls/riched20/clipboard.c
++++ b/dlls/riched20/clipboard.c
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include "editor.h"
++#include <shlobj.h>
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(richedit);
+ 
+@@ -427,3 +428,169 @@
+     *dataobj = &obj->IDataObject_iface;
+     return S_OK;
+ }
++
++/* Minimal IDataObject that offers a single CF_HDROP file.  riched20 hands one
++ * of these to the host's IDropTarget when the host refuses static pictures,
++ * so that hosts with a working file drop path (WeCom) can take the image. */
++typedef struct FileDataObjectImpl {
++    IDataObject IDataObject_iface;
++    LONG ref;
++    HGLOBAL hdrop;
++    FORMATETC fmt;
++} FileDataObjectImpl;
++
++static inline FileDataObjectImpl *impl_from_IFileDataObject(IDataObject *iface)
++{
++    return CONTAINING_RECORD(iface, FileDataObjectImpl, IDataObject_iface);
++}
++
++static HRESULT WINAPI FileDataObjectImpl_QueryInterface(IDataObject *iface, REFIID riid, void **out)
++{
++    TRACE("(%p)->(%s)\n", iface, debugstr_guid(riid));
++
++    if (IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_IDataObject))
++    {
++        IDataObject_AddRef(iface);
++        *out = iface;
++        return S_OK;
++    }
++    *out = NULL;
++    return E_NOINTERFACE;
++}
++
++static ULONG WINAPI FileDataObjectImpl_AddRef(IDataObject *iface)
++{
++    FileDataObjectImpl *This = impl_from_IFileDataObject(iface);
++    return InterlockedIncrement(&This->ref);
++}
++
++static ULONG WINAPI FileDataObjectImpl_Release(IDataObject *iface)
++{
++    FileDataObjectImpl *This = impl_from_IFileDataObject(iface);
++    ULONG ref = InterlockedDecrement(&This->ref);
++
++    if (!ref)
++    {
++        GlobalFree(This->hdrop);
++        free(This);
++    }
++    return ref;
++}
++
++static HRESULT WINAPI FileDataObjectImpl_GetData(IDataObject *iface, FORMATETC *fmt, STGMEDIUM *med)
++{
++    FileDataObjectImpl *This = impl_from_IFileDataObject(iface);
++
++    TRACE("(%p)->(fmt=%#x tym=%#lx)\n", This, fmt->cfFormat, fmt->tymed);
++    if (fmt->lindex != -1) return DV_E_LINDEX;
++    if (!(fmt->tymed & TYMED_HGLOBAL)) return DV_E_TYMED;
++    if (fmt->cfFormat != CF_HDROP) return DV_E_FORMATETC;
++
++    med->tymed = TYMED_HGLOBAL;
++    med->hGlobal = This->hdrop;
++    med->pUnkForRelease = (IUnknown *)iface;
++    IDataObject_AddRef(iface);
++    return S_OK;
++}
++
++static HRESULT WINAPI FileDataObjectImpl_GetDataHere(IDataObject *iface, FORMATETC *fmt, STGMEDIUM *med)
++{
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI FileDataObjectImpl_QueryGetData(IDataObject *iface, FORMATETC *fmt)
++{
++    TRACE("(%p)->(fmt=%#x tym=%#lx)\n", iface, fmt->cfFormat, fmt->tymed);
++    if (fmt->lindex != -1) return DV_E_LINDEX;
++    if (fmt->cfFormat != CF_HDROP) return DV_E_FORMATETC;
++    if (!(fmt->tymed & TYMED_HGLOBAL)) return DV_E_TYMED;
++    return S_OK;
++}
++
++static HRESULT WINAPI FileDataObjectImpl_GetCanonicalFormatEtc(IDataObject *iface, FORMATETC *in, FORMATETC *out)
++{
++    if (out)
++    {
++        *out = *in;
++        out->ptd = NULL;
++    }
++    return DATA_S_SAMEFORMATETC;
++}
++
++static HRESULT WINAPI FileDataObjectImpl_SetData(IDataObject *iface, FORMATETC *fmt, STGMEDIUM *med, BOOL release)
++{
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI FileDataObjectImpl_EnumFormatEtc(IDataObject *iface, DWORD direction, IEnumFORMATETC **out)
++{
++    FileDataObjectImpl *This = impl_from_IFileDataObject(iface);
++
++    if (direction != DATADIR_GET)
++    {
++        *out = NULL;
++        return E_NOTIMPL;
++    }
++    return EnumFormatImpl_Create(&This->fmt, 1, out);
++}
++
++static HRESULT WINAPI FileDataObjectImpl_DAdvise(IDataObject *iface, FORMATETC *fmt, DWORD flags,
++                                                 IAdviseSink *sink, DWORD *connection)
++{
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI FileDataObjectImpl_DUnadvise(IDataObject *iface, DWORD connection)
++{
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI FileDataObjectImpl_EnumDAdvise(IDataObject *iface, IEnumSTATDATA **out)
++{
++    return E_NOTIMPL;
++}
++
++static const IDataObjectVtbl VT_FileDataObjectImpl =
++{
++    FileDataObjectImpl_QueryInterface,
++    FileDataObjectImpl_AddRef,
++    FileDataObjectImpl_Release,
++    FileDataObjectImpl_GetData,
++    FileDataObjectImpl_GetDataHere,
++    FileDataObjectImpl_QueryGetData,
++    FileDataObjectImpl_GetCanonicalFormatEtc,
++    FileDataObjectImpl_SetData,
++    FileDataObjectImpl_EnumFormatEtc,
++    FileDataObjectImpl_DAdvise,
++    FileDataObjectImpl_DUnadvise,
++    FileDataObjectImpl_EnumDAdvise
++};
++
++HRESULT ME_CreateFileDataObject(const WCHAR *path, IDataObject **dataobj)
++{
++    SIZE_T chars = lstrlenW(path) + 2; /* string plus the double terminator */
++    SIZE_T size = sizeof(DROPFILES) + chars * sizeof(WCHAR);
++    FileDataObjectImpl *obj;
++    DROPFILES *df;
++
++    TRACE("(%s)\n", debugstr_w(path));
++
++    if (!(obj = calloc(1, sizeof(*obj)))) return E_OUTOFMEMORY;
++    obj->IDataObject_iface.lpVtbl = &VT_FileDataObjectImpl;
++    obj->ref = 1;
++    if (!(obj->hdrop = GlobalAlloc(GHND, size)))
++    {
++        free(obj);
++        return E_OUTOFMEMORY;
++    }
++
++    df = GlobalLock(obj->hdrop);
++    df->pFiles = sizeof(DROPFILES);
++    df->fWide = TRUE;
++    memcpy((BYTE *)df + sizeof(DROPFILES), path, chars * sizeof(WCHAR));
++    GlobalUnlock(obj->hdrop);
++
++    InitFormatEtc(obj->fmt, CF_HDROP, TYMED_HGLOBAL);
++    *dataobj = &obj->IDataObject_iface;
++    return S_OK;
++}
 --- a/dlls/riched20/editor.c
 +++ b/dlls/riched20/editor.c
-@@ -1111,7 +1111,7 @@
+@@ -227,6 +227,7 @@
+ #include "editor.h"
+ #include "commdlg.h"
+ #include "winreg.h"
++#include "shlobj.h"
+ #define NO_SHLWAPI_STREAM 
+ #include "shlwapi.h"
+ #include "rtf.h"
+@@ -1111,7 +1112,7 @@
  }
  
  static HRESULT insert_static_object(ME_TextEditor *editor, HENHMETAFILE hemf, HBITMAP hbmp,
@@ -27,7 +215,7 @@
  {
    LPOLEOBJECT         lpObject = NULL;
    LPSTORAGE           lpStorage = NULL;
-@@ -1121,6 +1121,7 @@
+@@ -1121,6 +1122,7 @@
    STGMEDIUM           stgm;
    FORMATETC           fm;
    CLSID               clsid;
@@ -35,7 +223,7 @@
    HRESULT             hr = E_FAIL;
    DWORD               conn;
  
-@@ -1129,12 +1130,14 @@
+@@ -1129,12 +1131,14 @@
        stgm.tymed = TYMED_ENHMF;
        stgm.hEnhMetaFile = hemf;
        fm.cfFormat = CF_ENHMETAFILE;
@@ -50,7 +238,7 @@
    }
    else return E_FAIL;
  
-@@ -1145,19 +1148,34 @@
+@@ -1145,19 +1149,34 @@
    fm.lindex = -1;
    fm.tymed = stgm.tymed;
  
@@ -94,7 +282,7 @@
      reobject.clsid = clsid;
      reobject.poleobj = lpObject;
      reobject.pstg = lpStorage;
-@@ -1337,11 +1355,11 @@
+@@ -1337,11 +1356,11 @@
          {
          case gfx_enhmetafile:
              if ((hemf = SetEnhMetaFileBits( size, buffer )))
@@ -108,7 +296,7 @@
              break;
          case gfx_dib:
          {
-@@ -1355,7 +1373,7 @@
+@@ -1355,7 +1374,7 @@
              if ((hbmp = CreateDIBitmap( hdc, &bi->bmiHeader,
                                          CBM_INIT, (char*)(bi + 1) + nc * sizeof(RGBQUAD),
                                          bi, DIB_RGB_COLORS)) )
@@ -117,7 +305,7 @@
              ReleaseDC( 0, hdc );
              break;
          }
-@@ -2231,9 +2249,19 @@
+@@ -2231,9 +2250,19 @@
  static HRESULT paste_emf(ME_TextEditor *editor, FORMATETC *fmt, STGMEDIUM *med)
  {
      HRESULT hr;
@@ -138,7 +326,7 @@
      if (SUCCEEDED(hr))
      {
          ME_CommitUndo( editor );
-@@ -2245,6 +2273,76 @@
+@@ -2245,6 +2274,276 @@
      return hr;
  }
  
@@ -185,10 +373,10 @@
 +        if (hbmp)
 +            memcpy( dst, src, image_size );
 +    }
-+    TRACE("paste_dib: globalsize %lu width %d height %d bpp %d comp %d "
++    TRACE("paste_dib: globalsize %lu width %d height %d bpp %d comp %lu "
 +          "image_size %lu src_offset %lu hbmp %p\n",
 +          (unsigned long)GlobalSize( hmem ), width, height,
-+          bmi->bmiHeader.biBitCount, bmi->bmiHeader.biCompression,
++          bmi->bmiHeader.biBitCount, (unsigned long)bmi->bmiHeader.biCompression,
 +          (unsigned long)image_size, (unsigned long)src_offset, hbmp);
 +    GlobalUnlock( hmem );
 +    CloseClipboard();
@@ -212,26 +400,261 @@
 +    return hr;
 +}
 +
++/* Pull the first file path out of the clipboard's CF_HDROP, if any. */
++static BOOL clipboard_first_file_path( WCHAR *path, DWORD len )
++{
++    HGLOBAL hmem;
++    DROPFILES *df;
++    BOOL ret = FALSE;
++
++    *path = 0;
++    if (!OpenClipboard( NULL )) return FALSE;
++    if ((hmem = GetClipboardData( CF_HDROP )))
++    {
++        if ((df = GlobalLock( hmem )))
++        {
++            if (df->fWide)
++                lstrcpynW( path, (const WCHAR *)((const BYTE *)df + df->pFiles), len );
++            else
++            {
++                char narrow[MAX_PATH];
++                lstrcpynA( narrow, (const char *)df + df->pFiles, MAX_PATH );
++                MultiByteToWideChar( CP_ACP, 0, narrow, -1, path, len );
++            }
++            ret = path[0] != 0;
++            GlobalUnlock( hmem );
++        }
++    }
++    CloseClipboard();
++    TRACE("clipboard file [%s] -> %d\n", debugstr_w( path ), ret);
++    return ret;
++}
++
++static BOOL path_has_image_extension( const WCHAR *path )
++{
++    static const WCHAR *extensions[] =
++    {
++        L".png", L".jpg", L".jpeg", L".gif", L".bmp", L".webp", L".ico"
++    };
++    const WCHAR *ext = wcsrchr( path, '.' );
++    UINT i;
++
++    if (!ext) return FALSE;
++    for (i = 0; i < ARRAY_SIZE( extensions ); i++)
++        if (!wcsicmp( ext, extensions[i] )) return TRUE;
++    return FALSE;
++}
++
++static void delete_stale_paste_files( const WCHAR *dir )
++{
++    WCHAR mask[MAX_PATH], name[MAX_PATH];
++    WIN32_FIND_DATAW fd;
++    ULARGE_INTEGER cutoff, stamp;
++    FILETIME now;
++    HANDLE find;
++
++    swprintf( mask, MAX_PATH, L"%swecom-paste-*.bmp", dir );
++    if ((find = FindFirstFileW( mask, &fd )) == INVALID_HANDLE_VALUE) return;
++    GetSystemTimeAsFileTime( &now );
++    cutoff.LowPart = now.dwLowDateTime;
++    cutoff.HighPart = now.dwHighDateTime;
++    cutoff.QuadPart -= (ULONGLONG)3600 * 10000000;
++
++    do
++    {
++        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
++        stamp.LowPart = fd.ftLastWriteTime.dwLowDateTime;
++        stamp.HighPart = fd.ftLastWriteTime.dwHighDateTime;
++        if (stamp.QuadPart >= cutoff.QuadPart) continue;
++        swprintf( name, MAX_PATH, L"%s%s", dir, fd.cFileName );
++        DeleteFileW( name );
++    } while (FindNextFileW( find, &fd ));
++    FindClose( find );
++}
++
++/* Write the clipboard bitmap as a BMP file the host's file drop handling can
++ * pick up.  The X11 driver only ever hands us a DIB, so there is no PNG to
++ * reuse and no encoder in riched20. */
++static HRESULT save_clipboard_dib_as_bmp( WCHAR *path, DWORD len )
++{
++    BITMAPFILEHEADER header;
++    BITMAPINFO *bmi;
++    HGLOBAL hmem;
++    DWORD palette_size, image_size, dib_size, written;
++    WCHAR dir[MAX_PATH];
++    HANDLE file;
++    static ULONG counter;
++
++    if (!OpenClipboard( NULL )) return E_FAIL;
++    if (!(hmem = GetClipboardData( CF_DIB )) || !(bmi = GlobalLock( hmem )))
++    {
++        CloseClipboard();
++        return E_FAIL;
++    }
++
++    image_size = bmi->bmiHeader.biSizeImage;
++    if (!image_size && bmi->bmiHeader.biWidth > 0 && bmi->bmiHeader.biHeight)
++        image_size = ((bmi->bmiHeader.biWidth * bmi->bmiHeader.biBitCount + 31) / 32) * 4
++                     * abs( bmi->bmiHeader.biHeight );
++
++    palette_size = 0;
++    if (bmi->bmiHeader.biCompression == BI_BITFIELDS) palette_size = 12;
++    else if (bmi->bmiHeader.biBitCount <= 8) palette_size = (1 << bmi->bmiHeader.biBitCount) * sizeof(RGBQUAD);
++    dib_size = bmi->bmiHeader.biSize + palette_size + image_size;
++
++    if (dib_size <= bmi->bmiHeader.biSize + palette_size || dib_size > GlobalSize( hmem ))
++    {
++        TRACE("bad DIB size %lu (global %lu)\n", dib_size, (unsigned long)GlobalSize( hmem ));
++        GlobalUnlock( hmem );
++        CloseClipboard();
++        return E_FAIL;
++    }
++
++    GetTempPathW( MAX_PATH, dir );
++    delete_stale_paste_files( dir );
++    swprintf( path, len, L"%swecom-paste-%lu-%lu.bmp", dir,
++              (unsigned long)GetCurrentProcessId(),
++              (unsigned long)InterlockedIncrement( (LONG *)&counter ) );
++
++    header.bfType = 0x4d42; /* "BM" */
++    header.bfSize = sizeof(header) + dib_size;
++    header.bfReserved1 = 0;
++    header.bfReserved2 = 0;
++    header.bfOffBits = sizeof(header) + bmi->bmiHeader.biSize + palette_size;
++
++    file = CreateFileW( path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL );
++    if (file != INVALID_HANDLE_VALUE)
++    {
++        WriteFile( file, &header, sizeof(header), &written, NULL );
++        WriteFile( file, bmi, dib_size, &written, NULL );
++        CloseHandle( file );
++    }
++    GlobalUnlock( hmem );
++    CloseClipboard();
++
++    TRACE("wrote %s (%lu bytes)\n", debugstr_w( path ), dib_size);
++    return file != INVALID_HANDLE_VALUE ? S_OK : E_FAIL;
++}
++
++/* Ask the host's registered drop target to take the file, exactly as if the
++ * user had dragged it over the caret.  WeCom refuses static OLE pictures from
++ * IRichEditOleCallback::QueryInsertObject but its own file drop path works. */
++static HRESULT paste_file_via_drop( ME_TextEditor *editor, const WCHAR *path )
++{
++    static const WCHAR prop[] = L"OleDropTargetInterface";
++    ME_Cursor *cursor = editor->pCursors;
++    IDropTarget *target = NULL;
++    IDataObject *data = NULL;
++    HWND hwnd = NULL, w, under;
++    POINT pt;
++    POINTL ptl;
++    DWORD effect = DROPEFFECT_COPY;
++    HRESULT hr;
++
++    if (editor->have_texthost2)
++        ITextHost2_TxGetWindow( editor->texthost, &hwnd );
++    if (!hwnd) hwnd = GetActiveWindow();
++    if (!hwnd) hwnd = GetFocus();
++    if (!hwnd)
++    {
++        TRACE("no host window for drop\n");
++        return E_FAIL;
++    }
++
++    /* same coordinate math as EM_POSFROMCHAR */
++    pt.x = cursor->run->pt.x + ME_PointFromChar( editor, cursor->run, cursor->nOffset, TRUE )
++           + editor->rcFormat.left - editor->horz_si.nPos;
++    pt.y = cursor->run->pt.y + cursor->para->pt.y + editor->rcFormat.top - editor->vert_si.nPos;
++    ClientToScreen( hwnd, &pt );
++    TRACE("drop point %ld,%ld host %p rcFormat %ld,%ld\n",
++          pt.x, pt.y, hwnd, editor->rcFormat.left, editor->rcFormat.top);
++
++    under = WindowFromPoint( pt );
++    for (w = under; w && !target; w = GetParent( w ))
++        if ((target = GetPropW( w, prop )))
++            TRACE("drop target %p on %p (under point)\n", target, w);
++    for (w = hwnd; w && !target; w = GetParent( w ))
++        if ((target = GetPropW( w, prop )))
++            TRACE("drop target %p on %p (from host)\n", target, w);
++    if (!target)
++    {
++        TRACE("host has no registered drop target\n");
++        return E_FAIL;
++    }
++
++    if (FAILED( hr = ME_CreateFileDataObject( path, &data ) )) return hr;
++
++    ptl.x = pt.x;
++    ptl.y = pt.y;
++    hr = IDropTarget_DragEnter( target, data, MK_LBUTTON, ptl, &effect );
++    TRACE("DragEnter -> %#lx effect %lu\n", hr, effect);
++    if (SUCCEEDED( hr ) && effect != DROPEFFECT_NONE)
++    {
++        IDropTarget_DragOver( target, MK_LBUTTON, ptl, &effect );
++        hr = IDropTarget_Drop( target, data, MK_LBUTTON, ptl, &effect );
++        TRACE("Drop -> %#lx effect %lu\n", hr, effect);
++    }
++    else hr = E_FAIL;
++
++    IDataObject_Release( data );
++    return hr;
++}
++
  static struct paste_format
  {
      FORMATETC fmt;
-@@ -2318,6 +2416,15 @@
+@@ -2276,6 +2575,7 @@
+ 
+ static BOOL paste_special(ME_TextEditor *editor, UINT cf, REPASTESPECIAL *ps, BOOL check_only)
+ {
++    WCHAR path[MAX_PATH];
+     HRESULT hr;
+     STGMEDIUM med;
+     struct paste_format *format;
+@@ -2293,6 +2593,12 @@
+     if (ps && ps->dwAspect != DVASPECT_CONTENT)
+         FIXME("Ignoring aspect %lx\n", ps->dwAspect);
+ 
++    /* Copying an image file in the file manager should paste the picture, the
++     * way other chat clients do, not its path as text. */
++    if (!cf && clipboard_first_file_path( path, MAX_PATH ) && path_has_image_extension( path )
++        && !check_only && paste_file_via_drop( editor, path ) == S_OK)
++        return TRUE;
++
+     hr = OleGetClipboard( &data );
+     if (hr != S_OK) return FALSE;
+ 
+@@ -2318,6 +2624,29 @@
  done:
      IDataObject_Release( data );
  
-+    /* no OLE format matched, fall back to the raw clipboard bitmap */
++    /* No OLE format matched: fall back to the raw clipboard bitmap. */
 +    if (hr != S_OK && (!cf || cf == CF_DIB || cf == CF_BITMAP))
 +    {
++        BOOL image_file = clipboard_first_file_path( path, MAX_PATH ) && path_has_image_extension( path );
++
 +        if (check_only)
-+            hr = IsClipboardFormatAvailable( CF_DIB ) ? S_OK : E_FAIL;
-+        else
++            hr = (image_file || IsClipboardFormatAvailable( CF_DIB )) ? S_OK : E_FAIL;
++        else if (image_file)
++            hr = paste_file_via_drop( editor, path );
++        else if (IsClipboardFormatAvailable( CF_DIB ))
++        {
 +            hr = paste_dib( editor );
++            if (hr != S_OK && SUCCEEDED( save_clipboard_dib_as_bmp( path, MAX_PATH )))
++            {
++                /* The host refused the static picture object (WeCom rejects
++                 * those in QueryInsertObject), so hand the bitmap over
++                 * through the host's own file drop handling instead. */
++                TRACE("static picture refused (%#lx), trying file drop\n", hr);
++                hr = paste_file_via_drop( editor, path );
++            }
++        }
 +    }
 +
      return hr == S_OK;
  }
  
-@@ -2903,26 +3010,102 @@
+@@ -2903,26 +3232,102 @@
      return sel_type;
  }
  
@@ -343,7 +766,7 @@
  }
  
  ME_TextEditor *ME_MakeEditor(ITextHost *texthost, BOOL bEmulateVersion10)
-@@ -3937,6 +4120,7 @@
+@@ -3937,6 +4342,7 @@
      link_notify( editor, msg, wParam, lParam );
      goto do_default;
    case WM_CONTEXTMENU:
@@ -351,6 +774,15 @@
      if (!ME_ShowContextMenu(editor, (short)LOWORD(lParam), (short)HIWORD(lParam)))
        goto do_default;
      break;
+--- a/dlls/riched20/editor.h
++++ b/dlls/riched20/editor.h
+@@ -434,5 +434,6 @@
+ 
+ /* clipboard.c */
+ HRESULT ME_GetDataObject(ME_TextEditor *editor, const ME_Cursor *start, int nChars, LPDATAOBJECT *lplpdataobj);
++HRESULT ME_CreateFileDataObject(const WCHAR *path, LPDATAOBJECT *dataobj);
+ 
+ void release_typelib(void);
 --- a/dlls/riched20/richole.c
 +++ b/dlls/riched20/richole.c
 @@ -1375,6 +1375,19 @@

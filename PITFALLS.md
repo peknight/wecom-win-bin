@@ -531,3 +531,42 @@ err:msvcrt:_wassert (L"run->reobj",L"../../dlls/riched20/richole.c",5717)
 
 **注意**：`assert` 在 `WINEDEBUG=-all` 下不会打到日志，所以带着补丁版 DLL
 闪退时看不到这行，别以为它不存在。
+
+### 14.8 绕过 QIO 白名单：把剪贴板图片当“文件投放”塞进输入框
+
+14.2 的死路是硬闯 `QueryInsertObject()`，对象插进去了，企业微信自己退出。
+可行的做法是**根本不让它看到 OLE 图片对象**，改用企业微信本来就会处理的
+文件投放（`IDropTarget::Drop`）。
+
+落地过程（`dlls/riched20/editor.c`、`clipboard.c`）：
+
+1. `paste_special()` 发现剪贴板里有 `CF_DIB` 时，先照旧尝试
+   `paste_dib()`；企业微信返回 `E_INVALIDARG` 后不再强行插入。
+2. 取到 `CF_DIB` 的全局内存，按 BMP 文件头重排后写到
+   `%TEMP%\wecom-paste-<pid>-<n>.bmp`（超过一小时的旧文件会被清掉）。
+3. 用这个路径构造一个最小的 `IDataObject`（`CF_HDROP` +
+   `DROPFILES`，`clipboard.c` 里的 `ME_CreateFileDataObject()`）。
+4. 从企业微信的顶层窗口上取回它自己 `RegisterDragDrop()` 时存下的 target：
+   `GetPropW(hwnd, L"OleDropTargetInterface")`，然后依次调
+   `DragEnter()` / `DragOver()` / `Drop()`，坐标用输入框客户区中心。
+
+企业微信把这些文件当作用户拖进来的图片附件处理，缩略图正常出现，发送也正常。
+`DragEnter` 返回 `S_OK`、`Drop` 返回 `S_OK`、`effect=1`（COPY）即成功。
+
+**文件管理器复制图片**走的是另一条路径：剪贴板里只有 `text/uri-list`，
+wine 会映射成 `CF_HDROP`。`paste_special()` 在 OLE 格式匹配之前先检查
+`clipboard_first_file_path()`，扩展名是图片就直接走同一个投放函数，
+这样 Thunar 里复制图片再 `Ctrl+V` 得到的是图片而不是文件路径文本。
+
+**实测**（企业微信 5.0.13.6005，5.0.13.6005-8）：
+
+- `/tmp/xtool/pngserve` 只提供 `image/png`：`drag enter/drop` 均 `S_OK`，
+  输入框出现缩略图；
+- 剪贴板只有 `text/uri-list` 指向 PNG：同样出图，不再是路径文本；
+- 粘贴后 `Ctrl+Z` 撤销，企业微信不再闪退（与 14.7 的修复叠加）；
+- `Ctrl+A` + `Backspace` 清空输入框，进程保持运行。
+
+**注意**：`OleDropTargetInterface` 是 wine 自己 `RegisterDragDrop()` 时挂在
+窗口属性上的指针，不是公开 API；升级 wine 后如果名字变了，日志里会看到
+`host has no registered drop target`，需要按新版本 wine 的 `dlls/ole32` 实现
+同步改。

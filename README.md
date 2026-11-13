@@ -83,13 +83,14 @@ deepin 补丁 dll（`WINEPREDLL`），实测默认 prefix 不需要，所以 1.0
 - 输入框右键没有菜单：补丁版 `riched20.dll` 在宿主不提供
   `ITextHost2` / `IRichEditOleCallback` 时自己弹默认菜单（14.4）
 - 撤销刚插入的图片会闪退：补丁版 `riched20.dll` 不再对空 `reobj` 断言（14.7）
+- 剪贴板图片粘不进输入框：企业微信拒收标准图片 OLE 对象，补丁版
+  `riched20.dll` 改为把图片临时存成 BMP 后走宿主的文件投放链路（14.8）。
+  截图工具复制、文件管理器复制图片文件两种方式都支持。
 
 ## 已知问题
 
-- 剪贴板里的图片粘不进企业微信输入框：包内补丁版 `riched20.dll` 能让普通
-  RichEdit 宿主正常粘 `CF_DIB`，但企业微信自己的
-  `IRichEditOleCallback::QueryInsertObject()` 拒收标准图片 CLSID，强行绕过
-  会让企业微信退出，详见 `PITFALLS.md` 14.2。
+- 16 位色深的 PNG 剪贴板粘不进去：企业微信依赖的 wine 驱动转 `CF_DIB` 失败，
+  包内没法补，日常截图工具存的都是 8 位 PNG，详见 `PITFALLS.md` 14.1。
 
 官方 Windows 包里带一套 OpenGL 能力探测（`win32-test.exe` /
 `win32_voip_test.exe`）和兆芯 GLX 兜底逻辑，本包没有照搬，因为没有证据表明
