@@ -372,3 +372,32 @@ export WINEDLLOVERRIDES='concrt140=n,b'
 
 **验证**：最小宿主里 `EM_CANPASTE` 返回 1；粘一张 240×160 的渐变图后用
 `magick compare -metric AE` 比窗口截图和源图，`AE=0`（逐像素一致）。
+
+### 14.1 只提供 `image/png` 的剪贴板也能粘（8 位 PNG）
+
+排查时一度以为“剪贴板里只有 `image/png` 就粘不进去”，结论是**错怪了**：
+deepin 的 `winex11.so` 自己链了 `libpng`（`strings` 能看到 `png_read_image`
+等符号），会把 X11 的 `image/png` 直转成 `CF_DIB`。所以在 Windows 侧看到的
+始终是 `CF_DIB`／`CF_DIBV5`／`CF_BITMAP`，只要 PNG 是 8 位就没问题。
+
+实测矩阵（`/tmp/xtool/pngserve` 只对外提供 `image/png`，win32 侧用
+`dibdump2.exe` 读）：
+
+| 剪贴板内容 | `GetClipboardData(CF_DIB)` |
+|------------|----------------------------|
+| 8 位 RGB PNG | 240×160 / 24bpp，正常 |
+| 8 位 RGBA PNG | 240×160 / 32bpp，正常 |
+| 16 位 RGB PNG | NULL，转换失败 |
+| 16 位 RGBA PNG | NULL，转换失败 |
+
+同一份 8 位 PNG 在最小 RichEdit 宿主里：打过补丁的 `riched20`
+`EM_CANPASTE=1`，粘完截图和源图 `AE=0`；wine 自带 `riched20`
+`EM_CANPASTE=0`，粘完长度不变。文字粘贴回归：粘 `hello` 长度 5，正常。
+
+**16 位 PNG 粘不进去是驱动侧限制**，锅不在 `riched20`：转换失败后 win32
+剪贴板里连一个能取到原始 PNG 字节的格式都没有（注册的 `PNG` 命名格式也是空的），
+包内没法补。截图工具、浏览器、GTK 剪贴板管理器存的都是 8 位 PNG，日常够用。
+
+**顺带记一笔**：Xfce 的 `xfsettingsd` 带剪贴板管理器，会接管 `CLIPBOARD`，
+接管后只剩 `image/png` 一个 target（`/tmp/xtool/whoowns` 看到 owner 是
+`xfsettingsd`）。所以“TARGETS 里只有 image/png”在本机是常态，不代表数据有问题。
