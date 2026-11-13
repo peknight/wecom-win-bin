@@ -185,3 +185,45 @@ prefix 名，同理。
 
 启动器已经导出了 `WINEDEBUG=-all` 压掉 wine 自己的调试输出；CEF 这部分是程序
 自身日志，压不掉，排查问题时直接忽略即可。
+
+## 11. 点 WorkBuddy 提示“没有下载”：Wine 里缺 `workbuddy://` 协议
+
+**现象**：企业微信里点 WorkBuddy 入口，弹窗说没有下载，但宿主机上
+`/usr/bin/workbuddy` 装着、`x-scheme-handler/workbuddy` 也关联到了
+`workbuddy.desktop`。deepin deb 那版没这个问题。
+
+**原因**：这个入口是 CEF 用 ShellExecute 打开 `workbuddy://...`，查询的是
+Windows 侧的协议关联。Wine 只内置 `http` / `https` / `mailto` 这类常见协议，
+`HKCR\workbuddy` 不存在，ShellExecuteEx 直接失败，页面上就显示成“没有下载”。
+宿主的 xdg 关联它看不到。
+
+**解法**：在 prefix 里注册 `workbuddy` 协议，命令指向 `winebrowser.exe`。
+winebrowser 会把它交给宿主的 `xdg-open`，再落到真正的 WorkBuddy。
+注册表内容在 `wecom-win-protocols.reg`，启动器的 `setup` 阶段每次都会应用。
+
+**注意写在 HKLM 而不是 HKCU**：实测只写
+`HKCU\Software\Classes\workbuddy` 时，`reg query HKCR\workbuddy` 查不到，
+`wine start workbuddy://...` 仍然报 `ShellExecuteEx failed: File not found`；
+写到 `HKLM\Software\Classes\workbuddy` 后才正常解析（和内置的 `https` 在同一个
+位置）。两个都写反而会掩盖这个区别，所以只留 HKLM。
+
+**验证**：
+
+```bash
+export WINEPREFIX="$HOME/.local/share/wineprefixes/wecom-win"
+export WINEDLLPATH=/opt/deepin-wine10-stable/lib:/opt/deepin-wine10-stable/lib64
+/opt/deepin-wine10-stable/bin/wine start 'workbuddy://discover'
+```
+
+宿主 WorkBuddy 的 `~/.workbuddy/logs/main.log` 里应出现：
+
+```
+[DeepLink] dispatching open url to renderer ... "scheme":"workbuddy","host":"discover"
+```
+
+对比：不注册时命令返回
+`Application could not be started, or no application associated with the specified file.`
+
+winebrowser 会顺带打印一行
+`xdg-settings: default-url-scheme-handler not implemented for xfce`，
+那是它在 xfce 下查默认处理器的噪音，后面的 `xdg-open` 仍然成功，可以忽略。

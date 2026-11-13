@@ -2,7 +2,7 @@
 
 pkgname=wecom-win-bin
 pkgver=5.0.13.6005
-pkgrel=2
+pkgrel=3
 pkgdesc='企业微信 Windows 客户端，基于 deepin-wine10 运行 | Tencent WeCom Windows build on deepin-wine'
 arch=('x86_64')
 url='https://work.weixin.qq.com/'
@@ -29,10 +29,12 @@ source=(
     'wecom-win.sh'
     'wecom-win.desktop'
     'wecom-win-fonts.reg'
+    'wecom-win-protocols.reg'
 )
 noextract=("WeCom_${pkgver}.exe")
 sha256sums=(
     '5df50a240038a2de7c3b17e4f25f4747e74d97f9028be9baec6f7379fc97e1be'
+    'SKIP'
     'SKIP'
     'SKIP'
     'SKIP'
@@ -70,6 +72,7 @@ package() {
     install -Dm644 "$srcdir/fonts/tahoma.ttf" "$share/fonts/tahoma.ttf"
     install -Dm644 "$srcdir/fonts/tahomabd.ttf" "$share/fonts/tahomabd.ttf"
     install -Dm644 "$srcdir/wecom-win-fonts.reg" "$share/wecom-win-fonts.reg"
+    install -Dm644 "$srcdir/wecom-win-protocols.reg" "$share/wecom-win-protocols.reg"
 
     local png size
     for png in "$srcdir"/icons/*.png; do

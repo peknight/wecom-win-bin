@@ -9,6 +9,7 @@ readonly WINE_ROOT='/opt/deepin-wine10-stable'
 readonly WINE_BIN="${WINE_ROOT}/bin/wine"
 readonly SETUP_EXE="${SHARE}/WeCom_${PKGVER}.exe"
 readonly FONTS_REG="${SHARE}/wecom-win-fonts.reg"
+readonly PROTOCOLS_REG="${SHARE}/wecom-win-protocols.reg"
 readonly WIN_APP_DIR='Program Files (x86)/WXWork'
 
 # 手工调试期建过的 prefix 也认，避免装完包装个新的又触发一次登录
@@ -79,6 +80,14 @@ apply_fonts() {
 	message "字体补丁已应用（Tahoma -> 文泉驿微米黑）"
 }
 
+apply_protocols() {
+	# 企业微信里的 WorkBuddy 入口用 ShellExecute 打开 workbuddy://，
+	# Wine 只内置 http/https/mailto 等少数协议，不注册就只会提示“没有下载”。
+	# 指向 winebrowser 后由它转发给宿主 xdg-open，落到系统的 WorkBuddy。
+	"${WINE_BIN}" regedit /S "${PROTOCOLS_REG}"
+	message "workbuddy:// 协议已注册（转发到宿主 xdg-open）"
+}
+
 ensure_prefix() {
 	if [[ ! -d "${WINEPREFIX}/drive_c" ]]; then
 		message "初始化 wine prefix: ${WINEPREFIX}"
@@ -96,6 +105,7 @@ ensure_prefix() {
 	fi
 
 	apply_fonts
+	apply_protocols
 }
 
 launch() {
