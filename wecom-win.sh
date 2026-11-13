@@ -64,6 +64,11 @@ setup_wine_env() {
 	export LANG='zh_CN.UTF-8'
 	export LANGUAGE='zh_CN'
 	export WINEDEBUG='-all'
+	# 融合会议 wwmapp.exe 会构造 MSVC 并发库的 _TaskCollection，Wine 自带的
+	# concrt140.dll 只是个 stub，调用即 EXCEPTION_WINE_STUB 中止，表现为
+	# “加入快速会议”转圈后进程闪退。优先加载程序目录里的原生 concrt140；
+	# 别的进程找不到原生副本时仍回退 builtin，避免影响主程序启动。
+	export WINEDLLOVERRIDES='concrt140=n,b'
 }
 
 app_installed() {

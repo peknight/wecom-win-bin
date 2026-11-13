@@ -272,3 +272,46 @@ CHECK_EQ(PAGE_READWRITE, old_protection);
 用 CDP 在企业微信页面里 `window.open` 一篇 `mp.weixin.qq.com` 文章，能画出正文
 （148 行文字像素、微信红 `#fa5151`）而不是纯白。2026-11-13 用户在实际入口
 确认三个弹窗均正常，此后 Crashpad 没有新增 dump。
+
+## 13. 点“加入快速会议”转圈后闪退：Wine 自带 concrt140 是半成品
+
+**现象**：点“加入快速会议”，转几圈后没有会议窗口；老的 deepin deb 版能正常
+拉起会议。Crashpad 里 `wwmapp.exe`（`WeMeet/3.26.511.637/`，进程名“企微融合
+会议”）留下 dump，两次触发的异常记录完全一致：
+
+```
+code=0x80000100 flags=0x1 addr=0x7a048703 npar=2
+params 0x765d2000 0x765d214c
+```
+
+`0x80000100` 是 Wine 的 `EXCEPTION_WINE_STUB`，两个参数指向模块名和函数名。
+dump 里模块表显示 `0x765c0000` 的 `concrt140.dll`，而 `0x765d2xxx` 正好落在
+它的 `.text` 里（winebuild 生成的 stub 把字符串就放在桩代码后面），说明命中的
+是 **Wine 自带的 concrt140**，不是企业微信目录里的原生 DLL。
+
+**复现**：从 dump 里抠出 `wwmapp.exe` 的完整命令行（PEB 里能读到 `--scheme=`
+是 `wemeet://page/inmeeting?...`），把会议号换成无效值单独跑，加
+`WINEDEBUG=+seh`，stderr 直接给出函数名：
+
+```
+wine: Call from 7A048703 to unimplemented function
+concrt140.dll.??0_TaskCollection@details@Concurrency@@QAE@XZ, aborting
+```
+
+即 MSVC 并发库 `Concurrency::details::_TaskCollection` 的构造函数在 Wine 的
+builtin 里没有实现。`wwmapp` 一初始化线程池就踩到，SEH 没人接，进程退出。
+
+**解法**：启动器里优先原生：
+
+```
+export WINEDLLOVERRIDES='concrt140=n,b'
+```
+
+企业微信的 `WeMeet/3.26.511.637/concrt140.dll` 是完整的 MSVC 运行时；
+`MSVCP140.dll`、`vcruntime140.dll` 本来就默认走原生。加 override 后同样的
+命令行不再出现 `EXCEPTION_WINE_STUB`，进程能活到创建 D3D swapchain、
+正常画会议窗口。写成 `n,b` 而不是只写 `n`，是为了让搜索路径里没有原生
+`concrt140.dll` 的其他组件还能回退到 builtin，不至于整体起不来。
+
+**注意**：别去补 Wine 的 concrt140 实现，也别改 `wwmapp` 的调用点；这个
+构造函数属于 MSVC 内部 ABI，用微软原版 DLL 才是正路。
