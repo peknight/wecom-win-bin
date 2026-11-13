@@ -109,8 +109,22 @@ ensure_prefix() {
 }
 
 launch() {
+	# Wine 把 PE 的可写数据节映射成 PAGE_WRITECOPY，而 V8 启动时的
+	# FreezeFlags() 会 VirtualProtect 成只读并断言旧保护属性是 PAGE_READWRITE，
+	# 断言失败即 IMMEDIATE_CRASH，renderer 起来就死，CEF 弹窗（Industry News、
+	# Request for use、Approvals）因此白屏。关掉 flag 冻结可绕过，代价是少了
+	# 一层 V8 自身的防御性只读保护。用户自己传了 --js-flags 就尊重用户的。
+	local -a cef_args=(--js-flags=--no-freeze-flags-after-init)
+	local arg
+	for arg in "$@"; do
+		if [[ ${arg} == --js-flags=* ]]; then
+			cef_args=()
+			break
+		fi
+	done
+
 	cd "${WINEPREFIX}/drive_c/${WIN_APP_DIR}"
-	exec "${WINE_BIN}" WXWork.exe "$@"
+	exec "${WINE_BIN}" WXWork.exe "${cef_args[@]}" "$@"
 }
 
 main() {

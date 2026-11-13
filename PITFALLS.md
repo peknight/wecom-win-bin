@@ -227,3 +227,47 @@ export WINEDLLPATH=/opt/deepin-wine10-stable/lib:/opt/deepin-wine10-stable/lib64
 winebrowser 会顺带打印一行
 `xdg-settings: default-url-scheme-handler not implemented for xfce`，
 那是它在 xfce 下查默认处理器的噪音，后面的 `xdg-open` 仍然成功，可以忽略。
+
+## 12. CEF 弹窗（Industry News / Request for use / Approvals）白屏
+
+**现象**：主界面和聊天正常，点开这几个独立弹窗后内容区纯白；有时是“闪白”，
+切焦点时变白、点一下鼠标又出来一点；`Workspace` 却有内容。
+
+**原因**：不是网络，也不是页面问题，是 renderer 启动即崩。Wine 把 PE 的可写
+数据节映射成 `PAGE_WRITECOPY`（`0x08`），而 V8 初始化结尾的 `FreezeFlags()`
+会调 `OS::SetDataReadOnly()`，里面有两句：
+
+```cpp
+CHECK(VirtualProtect(address, size, PAGE_READONLY, &old_protection));
+CHECK_EQ(PAGE_READWRITE, old_protection);
+```
+
+旧保护属性是 `0x08` 而不是 `0x04`，第二句失败 → `IMMEDIATE_CRASH()` →
+`STATUS_BREAKPOINT`，dump 里看到的偏移固定是 `libcef.dll+0x16a59ac`
+（文件偏移 `0x16a4dac`，`cc 0f 0b` 崩溃桩）。renderer 死了，宿主不停重建，
+窗口就一直白。
+
+**解法**：启动时给 CEF 传 V8 参数
+
+```
+--js-flags=--no-freeze-flags-after-init
+```
+
+`wecom-win.sh` 的 `launch()` 已默认带上；如果用户命令行里已经有
+`--js-flags=...`，就不再加，避免覆盖。
+
+**别做的事**：
+
+- 别去 patch `libcef.dll` 的 `jne`。09:10 试过把 `0x16a49eb` 的 6 字节 `jne`
+  换成 NOP，结果整进程 unhandled page fault，比白屏更糟。
+- 别用 `--single-process`。CEF 会 `Cannot use V8 Proxy resolver in single
+  process mode.`，然后 browser 级崩溃循环。
+- 别关合成器/改 xfwm4。跟本问题无关，还会引出窗口黑毛边。
+
+**代价**：跳过 flag 冻结只少掉 V8 自身的一层防御性只读保护（前提是攻击者已经
+能在进程内任意写），不影响功能与沙箱。排查过程与证据见
+`DEBUG-CEF-WHITEPAGE.md`。
+
+**验证**：启动后 `Crashpad/reports` 不再新增 dump、renderer PID 不再起落；
+用 CDP 在企业微信页面里 `window.open` 一篇 `mp.weixin.qq.com` 文章，能画出正文
+（148 行文字像素、微信红 `#fa5151`）而不是纯白。

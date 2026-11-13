@@ -1,8 +1,8 @@
 # CEF 弹窗白屏调查记录
 
-日期：2026-11-12
+日期：2026-11-12（2026-11-13 定位根因并落包，见第 11 节）
 环境：Arch Linux + Xfce(xfwm4 合成器) + deepin-wine10-stable 10.14
-包：`wecom-win-bin 5.0.13.6005-2`（exe 线路，prefix `~/.local/share/wineprefixes/wecom-win`）
+包：`wecom-win-bin 5.0.13.6005-4`（exe 线路，prefix `~/.local/share/wineprefixes/wecom-win`）
 
 本文是调查过程中的工作记录，结论会随证据更新。已验证的事实和推测分开写，不要混着用。
 
@@ -15,17 +15,52 @@
 3. `Workspace` 有内容，说明不是所有 webview 都坏，坏的是这些独立弹窗的渲染进程。
 4. 历史上（早几天）同一套 exe 是能看到内容的，所以这是退化，不是从来没通过。
 
-## 2. 当前结论
+## 2. 当前结论（2026-11-13 已定位并验证）
 
-**白屏的原因是 CEF 的 renderer 进程启动即崩溃，不是网络问题、不是网页内容问题、
-也不是单纯的重绘/合成器问题。**
+**白屏 = CEF 的 renderer 在启动阶段被 V8 的 `CHECK` 自杀，宿主不停重建 renderer，
+页面自然是一块没人画的白色。** 不是网络问题、不是网页内容问题，也不是合成器问题。
 
-崩溃点固定为 Chromium 自己的 `CHECK` 失败（`STATUS_BREAKPOINT`），崩在 libcef 内部
-V8 初始化顺序检查上。renderer 一死，页面就是一块没人画的空白；宿主程序会不断重建
-renderer，于是表现为“闪白”“点一下出来一点”“有时完全白”。
+精确链路：
 
-证据链见第 4 节。尚未确认的是：**为什么在 Wine 下 V8 会被乱序/重复初始化**，
-这是下一步要查的点。
+1. Wine 把 PE 镜像里的可写数据节映射成 `PAGE_WRITECOPY`（`0x08`），而不是
+   Windows 上的 `PAGE_READWRITE`（`0x04`）。
+2. V8 初始化结尾默认调用 `FlagList::FreezeFlags()`（`freeze_flags_after_init`
+   默认为 true）。
+3. `FreezeFlags()` 调 `OS::SetDataReadOnly(&v8_flags, ...)`，其实现是：
+
+   ```cpp
+   CHECK(VirtualProtect(address, size, PAGE_READONLY, &old_protection));
+   CHECK_EQ(PAGE_READWRITE, old_protection);
+   ```
+
+4. Wine 返回的旧保护属性是 `0x08`，第二条 `CHECK_EQ` 不成立，触发
+   `IMMEDIATE_CRASH()`（`int3` → `STATUS_BREAKPOINT`），renderer 起来就死。
+
+崩溃现场对齐（CEF `107.0.0-HEAD.2694+g87e0f30+chromium-107.0.5304.122`，V8 `10.7.193.22`）：
+
+```
+crash RVA    0x16a59ac      （相对 libcef.dll 镜像基址）
+文件偏移      0x16a4dac      （.text VMA 0x10001000、file off 0x400，
+                              RVA 0x1000 对应文件 0x400）
+该处字节      cc 0f 0b cc   int3 / ud2 / int3，就是 IMMEDIATE_CRASH 桩
+
+116a55d1  push 0x1a770000
+116a55d6  call [VirtualProtect]
+116a55dc  test eax,eax
+116a55de  je   0x116a59a9
+116a55e4  cmp  [ebp-0xd4], 4      ; 期望 PAGE_READWRITE
+116a55eb  jne  0x116a59ac         ; 实际 0x08，跳进崩溃桩
+```
+
+早先根据字符串 `Multiple threads are initializating V8 in the wrong order`
+推测的“V8 重复/乱序初始化”不成立：那两条字符串是同函数里相邻的另一组 CHECK，
+真正失败的是紧随其后的保护属性断言。
+
+**修复**：给 CEF 传 V8 参数 `--js-flags=--no-freeze-flags-after-init`，跳过
+`FreezeFlags()`。代价只是少掉 V8 对自身 flag 存储的防御性只读保护（防的是进程内
+已能写内存的攻击者），不影响页面逻辑、沙箱和其它进程。选它而不是 patch
+`libcef.dll`，是因为不动腾讯的二进制，升级版本也不会失效。
+`wecom-win.sh` 已默认注入；用户自己传 `--js-flags` 时不覆盖。
 
 ## 3. 时间线与操作记录
 
@@ -104,15 +139,20 @@ $ strings -t x libcef.dll | grep -i 'wrong order'
 白屏期间能看到 renderer 反复启动：`Crash reporting enabled for process: renderer`
 每隔几秒出现一次，说明 renderer 起来就死、宿主一直重建。
 
-### 4.5 未完全对齐的一点
+### 4.5 崩溃地址与文件偏移对齐（已修正）
 
-按 PE 节区表（`.text` VMA `0x10001000`、文件偏移 `0x400`）换算，RVA `0x16a59ac`
-落在文件偏移 `0x6a4dac`，该处是正常函数体，不是 `int3`；附近的 `int3` 填充在
-`0x6a4d9d`–`0x6a4d9f`，紧跟一个函数开头 `0x6a4da0`。
+早先按 `.text` VMA `0x10001000` 直接当 RVA 换算，得到 `0x6a4dac`，那里是正常
+函数体（`55 89 e5 ...`），于是被误判为“地址错位”。问题出在 `.text` 的 VMA 是
+**含镜像基址 `0x10000000` 的 VA**，节区 RVA 实际是 `0x1000`。
 
-也就是说 minidump 记录的异常地址和文件里的断点字节之间存在十几字节的错位，
-可能是 Wine/minidump 记录方式导致。**结论（V8 CHECK 自杀）有字符串和调用链两条
-独立证据支撑，但具体到哪一条 `CHECK` 还没落到源码行**，下一步要精确对齐。
+正确换算：
+
+```
+文件偏移 = RVA - 0x1000 + 0x400 = 0x16a59ac - 0xc00 = 0x16a4dac
+0x16a4dac 处：cc 0f 0b cc（int3 / ud2 / int3）
+```
+
+与反汇编里 `jne 0x116a59ac` 的目标完全一致，没有错位。
 
 ## 5. 排除项与副作用
 
@@ -151,31 +191,25 @@ setsid xfwm4 --replace --compositor=on >/tmp/xfwm4-compositor.log 2>&1 </dev/nul
 CEF 日志里出现 `Cannot use V8 Proxy resolver in single process mode.`，随后
 每 4 秒一次 browser 级崩溃重启。这条路不成立，别再试。
 
-## 6. 尚未验证的假设
+## 6. 已排除的假设
 
-1. **同一进程加载了两个不同版本的 libcef**：Program Files 下 `5.0.13.6005/compatible_web/libcef.dll`，
-   AppData 下还有 `cef/5.0.82.5512`。如果两份都被加载，V8 全局状态被两套代码初始化，
-   正好能解释“初始化顺序错”的 CHECK。目前进程命令行用的是 Program Files 那份，
-   需要查进程模块列表确认是否只加载了一份。
-2. **V8 平台被重复 `Initialize`**：Wine 下线程/TLS 行为差异（比如 `ThreadLocalStorage`
-   或 `FlsAlloc` 实现）导致 V8 认为初始化乱序。
-3. **宿主程序在 wine 下并发创建多个 webview**，各自触发 V8 初始化，但共享同一份
-   libcef 静态状态。
+1. **双 libcef**：`/proc/<pid>/maps` 里 renderer 只映射了
+   `5.0.13.6005/compatible_web/libcef.dll`，AppData 下那份旧 cef 没有被加载。
+2. **V8 平台重复 `Initialize` / 乱序初始化**：字符串是相邻 CHECK 桩，不是失败点；
+   同一进程里 5 个 renderer 稳定并存，没有初始化竞争表现。
+3. **网络 / 页面内容 / 代理**：同一篇 `mp.weixin.qq.com` 文章在 11-12 17:34 的
+   日志里加载成功过（有页面 JS 的 console 输出），说明 CEF 本身能满足这类页面。
+4. **合成器 / GPU / DPI**：关合成器、`--disable-gpu`、`--disable-direct-composition`
+   都不改变 renderer 崩溃；崩溃发生在 V8 初始化，跟绘制路径无关。
 
 ## 7. 下一步计划
 
-1. 精确对齐 crash RVA 到源码/符号：拿 `ptype=renderer` 的 dump，确认实际 `int3`
-   地址（对比异常地址 ±32 字节），再用 V8 源码里那句拼错的字符串定位 `CHECK`。
-2. 确认是否重复加载 libcef：看 `WXWorkWeb.exe` 进程的模块列表（wine 下可用
-   `/proc/<pid>/maps` 过滤 `libcef`）。
-3. 参数实验矩阵（一次只改一个）：
-   `--renderer-process-limit=1`、`--disable-site-isolation-trials`、
-   `--disable-features=...`、`--js-flags=--no-...`（V8 侧限制）。
-4. 如果确认是双 libcef，考虑在启动器里把 AppData 那份旧 cef 目录改名/隔离（可回滚，
-   先备份），再验证弹窗。
-5. 修好后：改 `wecom-win.sh`（或 desktop/环境变量），`pkgrel 2 -> 3`，
-   在 `PITFALLS.md` 补一条“CEF 弹窗白屏”，重新构建安装，确认三个弹窗都能出内容，
-   最后提交并推 `origin` / `upstream`。
+1. ~~对齐 crash RVA~~：已完成，见 4.5。
+2. ~~确认是否重复加载 libcef~~：已排除，见第 6 节。
+3. ~~参数实验~~：`--js-flags=--no-freeze-flags-after-init` 命中，见第 11 节。
+4. ~~修好后落包~~：`wecom-win.sh` 注入该参数，`pkgrel 3 -> 4`，PITFALLS 补条目。
+5. 剩下要用户自己确认的：在真实入口点开 `Industry News`、`Request for use`、
+   `Approvals` 三个窗口，确认与 CDP 复现的结果一致。
 
 ## 8. 回滚与安全边界
 
@@ -234,3 +268,71 @@ wine: Unhandled page fault on read access to 00000000 at address 794FFF06 (threa
 
 崩溃现场（minidump + Bugly 文本 + 崩溃时的 stderr）另存于
 `~/wecom-crash-20261113/`。
+
+## 11. 2026-11-13 09:29 参数验证与落包
+
+### 11.1 验证启动方式
+
+```bash
+setsid nohup /usr/bin/wecom-win \
+  --js-flags=--no-freeze-flags-after-init \
+  --remote-debugging-port=9222 \
+  >/tmp/wecom-jsflags.log 2>&1 </dev/null &
+```
+
+主进程 PID 2280095，browser 进程 2280253。5 个 renderer 的命令行里都能看到
+`--js-flags=--no-freeze-flags-after-init`（browser 会把 js-flags 传给子进程）。
+
+### 11.2 稳定性观察
+
+- 09:29 启动，到 09:35 观察结束，renderer PID 全程稳定，没有起落重建。
+- Crashpad 目录（`.../wxworkweb/User Data/Crashpad/reports`）停在 09:25 的 31 个
+  dump，启动后没有新增。对照组：无参数时 renderer 每几十秒崩一次。
+- CEF 日志里 09:29 之后只有 `host_resolver` / GPU DPI 之类的常规噪声，没有
+  `Crash reporting enabled for process: renderer` 的反复重建。
+
+### 11.3 真实弹窗复现（不依赖手工点击）
+
+用 CDP 在企业微信自己的页面里触发 `window.open`，走的就是它创建 CEF 弹窗的那条
+路径：
+
+```python
+# 对 群公告 页面执行
+Runtime.evaluate: window.open('about:blank','_blank','width=900,height=700')
+# 再把新 target Page.navigate 到日志里失败过的 Industry News 文章
+https://mp.weixin.qq.com/s?...&from=industrynews&color_scheme=light#rd
+```
+
+结果：
+
+| 检查项 | 结果 |
+|--------|------|
+| 新 X 窗口 | `0x04800020`，560x640，`_NET_WM_WINDOW_TYPE_NORMAL`，标题=文章标题 |
+| 文章标题 | `中产因买房返贫，现在严重问题出现了`（说明 DOM 真正解析了） |
+| 正文 | `document.body.innerText.length = 255`，布局尺寸 546x592 |
+| X11 截图 | 309 种颜色、88% 白底、2.42% 彩色像素（微信红 `#fa5151`） |
+| 文字像素 | 2.71% 深色像素，148 行连续文字行（y=42..536） |
+| CDP 截图 | 558x569、81KB，与 X11 截图一致，有内容 |
+| renderer | 新增 3 个 renderer 进程全部存活，dump 无新增 |
+
+对照组（无参数时期）同一条导航在日志里是
+`OnResourceLoadComplete: ... from=industrynews ...,failed, error_code:-3`，
+随后 renderer 反复重建、窗口纯白。
+
+测试完成后用 `wmctrl -ic 0x04800020` 关掉，窗口和 CDP target 都回到测试前的
+3 个页面，没有残留。
+
+### 11.4 落包
+
+- `wecom-win.sh` 的 `launch()` 默认追加
+  `--js-flags=--no-freeze-flags-after-init`；检测到用户已传 `--js-flags=*`
+  时不再追加，避免覆盖用户参数。
+- `PKGBUILD` 的 `pkgrel` 从 3 提到 4，`pkgver` 不变。
+- `PITFALLS.md` 增加“CEF 弹窗白屏”条目。
+
+### 11.5 已知代价
+
+`--no-freeze-flags-after-init` 让 V8 不在初始化后把 flag 内存改成只读。这只影响
+V8 自身的防御性加固，前提是攻击者已经能在进程内任意写；对功能、渲染、沙箱边界
+没有影响。相比 patch `libcef.dll`（09:10 那次直接换来 unhandled page fault），
+这是可逆、跟版本无关的做法。
