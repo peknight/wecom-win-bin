@@ -200,3 +200,37 @@ CEF 日志里出现 `Cannot use V8 Proxy resolver in single process mode.`，随
 | `/tmp/flash_probe.py` | 定时截窗口，统计白屏/闪白 |
 
 如果这些脚本还要继续用，下一步应当把它们挪进仓库的 `tools/` 下再提交，避免重启丢失。
+
+## 10. 2026-11-13 09:10 崩溃与实验补丁回滚
+
+**做了什么**：08:55 把 `compatible_web/libcef.dll` 文件偏移 `0x16a49eb` 处的 `jne`
+改成 6 字节 NOP（原文件 182256176 字节，sha256
+`007385e85fce0e70788dbc362792d0738f6a7f5a045858924ab4789fa58a369f`）。
+
+**结果**：09:10 企业微信弹出报错后整个进程退出。`/tmp/wecom-patch1.log` 里：
+
+```
+wine: Unhandled page fault on read access to 00000000 at address 794FFF06 (thread 0b58), starting debugger...
+```
+
+`0x794FFF06` 落在 `ucrtbase.dll + 0x6ff06`（32 位进程），紧接着是 CEF 关闭 tab 的
+日志。同一时刻 Bugly 留下的 minidump 记录的是 `WXWork.exe + 0x5a5b667`、异常码
+`0xc0000005`。两份证据都指向进程内的空指针访问，不是协议注册引起的。
+
+**排除协议因素**：重启后单独执行一次
+`wine start 'workbuddy://discover'`，主进程一直存活、日志里没有 page fault。
+说明单纯走 `workbuddy://` 不会崩。
+
+**处理**：
+
+1. 打补丁的 dll 移到 `~/wecom-crash-20261113/libcef.dll.patched-0913`
+   （sha256 `4ded8297...`，留作对照）。
+2. 从 `libcef.dll.orig-5.0.13.6005` 还原，sha256 与备份一致。
+3. `wineserver -k` 后重启，`WXWorkWeb.exe` 的 `/proc/<pid>/maps` 已指向还原后的
+   dll，启动日志无 page fault。
+
+**结论**：NOP 补丁没验证出白屏改善，却引入了崩溃风险，先回滚。以后要再试，
+必须单独立项、每次只改一处，并预留观察时间；`.orig` 备份不要删。
+
+崩溃现场（minidump + Bugly 文本 + 崩溃时的 stderr）另存于
+`~/wecom-crash-20261113/`。
