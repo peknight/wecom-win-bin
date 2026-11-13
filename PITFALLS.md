@@ -592,3 +592,27 @@ wine 会映射成 `CF_HDROP`。`paste_special()` 在 OLE 格式匹配之前先�
 窗口属性上的指针，不是公开 API；升级 wine 后如果名字变了，日志里会看到
 `host has no registered drop target`，需要按新版本 wine 的 `dlls/ole32` 实现
 同步改。
+
+### 14.10 裸 `wine WXWork.exe` 启动会退回 builtin riched20
+
+调试时直接 `wine WXWork.exe`（或任何不经 `/usr/bin/wecom-win` 的启动方式）
+跑起来的企业微信，会用 wine 自带的
+`/opt/deepin-wine10-stable/lib/wine/i386-windows/riched20.dll`。表现是**右键
+菜单不出来、粘贴图片也不出缩略图**，看着像“补丁失效回退”，其实是补丁 DLL
+根本没被加载。启动器里的
+`WINEDLLOVERRIDES='concrt140=n,b;riched20=n,b'` 才是让它优先取应用目录里
+那份原生 DLL 的关键。
+
+确认办法：
+
+```bash
+pid=$(pgrep -f '^C:\\Program Files \(x86\)\\WXWork\\WXWork.exe' | head -1)
+grep -i riched20 /proc/$pid/maps | head -1
+```
+
+路径应当是 `.../drive_c/Program Files (x86)/WXWork/riched20.dll`；出现
+`/opt/deepin-wine10-stable/lib/wine/...` 就是走错了。
+
+要抓 debug 日志时也别拿裸 `wine` 起：启动器内部把 `WINEDEBUG` 固定成
+`-all`，外层传进来的会被覆盖，复制一份启动器脚本改掉那行即可。功能复测
+一律走 `wecom-win`。
