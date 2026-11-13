@@ -270,4 +270,5 @@ CHECK_EQ(PAGE_READWRITE, old_protection);
 
 **验证**：启动后 `Crashpad/reports` 不再新增 dump、renderer PID 不再起落；
 用 CDP 在企业微信页面里 `window.open` 一篇 `mp.weixin.qq.com` 文章，能画出正文
-（148 行文字像素、微信红 `#fa5151`）而不是纯白。
+（148 行文字像素、微信红 `#fa5151`）而不是纯白。2026-11-13 用户在实际入口
+确认三个弹窗均正常，此后 Crashpad 没有新增 dump。

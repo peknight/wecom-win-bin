@@ -336,3 +336,14 @@ https://mp.weixin.qq.com/s?...&from=industrynews&color_scheme=light#rd
 V8 自身的防御性加固，前提是攻击者已经能在进程内任意写；对功能、渲染、沙箱边界
 没有影响。相比 patch `libcef.dll`（09:10 那次直接换来 unhandled page fault），
 这是可逆、跟版本无关的做法。
+
+### 11.6 用户实测确认（2026-11-13 09:40）
+
+用户在日常使用中确认改动有效，之前白屏的弹窗能正常出内容。同一时刻复查现场：
+
+- Crashpad 里最新的 dump 仍是 09:25（修复前的），没有新增；
+- renderer 进程有 7 个，其中 3 个是用户新开窗口时拉起来的，全部存活；
+- 主窗口正常，没有出现崩溃重启。
+
+结论：`5.0.13.6005-4` 的 `--js-flags=--no-freeze-flags-after-init` 方案在真实
+入口上成立，后续升级 CEF 版本时优先保留这个参数。
