@@ -1,6 +1,53 @@
 --- a/dlls/riched20/caret.c
 +++ b/dlls/riched20/caret.c
-@@ -468,9 +468,12 @@
+@@ -226,7 +226,7 @@
+   ME_Paragraph *para = cursor->para;
+   ME_Run *size_run = run, *prev;
+   ME_Context c;
+-  int run_x;
++  int run_x, ascent, descent;
+   HDC hdc = ITextHost_TxGetDC( editor->texthost );
+ 
+   assert(~para->nFlags & MEPF_REWRAP);
+@@ -235,14 +235,34 @@
+ 
+   ME_InitContext( &c, editor, hdc );
+ 
+-  if (!cursor->nOffset && (prev = run_prev( run ))) size_run = prev;
++  /* A graphics run carries the picture height in nAscent, so taking it as the
++   * caret's size run makes the caret as tall as the image and lifts it off the
++   * baseline. Skip pictures when looking for the preceding run, and use the
++   * text metrics of the run's style when the cursor sits right before one. */
++  if (!cursor->nOffset)
++  {
++    prev = run_prev( run );
++    while (prev && (prev->nFlags & MERF_GRAPHICS)) prev = run_prev( prev );
++    if (prev) size_run = prev;
++  }
+ 
+   run_x = ME_PointFromCharContext( &c, run, cursor->nOffset, TRUE );
+ 
+-  *height = size_run->nAscent + size_run->nDescent;
++  if (size_run->nFlags & MERF_GRAPHICS)
++  {
++    ascent = size_run->style->tm.tmAscent;
++    descent = size_run->style->tm.tmDescent;
++  }
++  else
++  {
++    ascent = size_run->nAscent;
++    descent = size_run->nDescent;
++  }
++
++  *height = ascent + descent;
+   *x = c.rcView.left + run->pt.x + run_x - editor->horz_si.nPos;
+   *y = c.rcView.top + para->pt.y + row->nBaseline
+-       + run->pt.y - size_run->nAscent - editor->vert_si.nPos;
++       + run->pt.y - ascent - editor->vert_si.nPos;
+   ME_DestroyContext(&c);
+   ITextHost_TxReleaseDC( editor->texthost, hdc );
+   return;
+@@ -468,9 +488,12 @@
  
    if (editor->lpOleCallback)
    {

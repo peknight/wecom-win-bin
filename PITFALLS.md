@@ -481,6 +481,10 @@ Wine 的 `ME_ShowContextMenu()` 原来有条硬门槛：宿主没实现
   之前“一次右键弹出两个菜单、一大一小”，就是宿主自己弹了一个、riched20
   又补了一个。
 
+> `-8` 曾把“宿主返回 `S_OK` 但菜单为 NULL”当成拒绝处理，改由 riched20
+> 补弹内置菜单；实测企业微信照样会弹自己那份，两个菜单又一起出现。
+> `-9` 回退了这段，只保留“宿主不给菜单就不补”的逻辑。
+
 ### 14.5 包里的 DLL 会在每次启动时盖掉 prefix 里的实验 DLL
 
 `apply_wine_dlls()` 发现 `/usr/share/wecom-win-bin/riched20.dll` 和 prefix
@@ -557,6 +561,24 @@ err:msvcrt:_wassert (L"run->reobj",L"../../dlls/riched20/richole.c",5717)
 wine 会映射成 `CF_HDROP`。`paste_special()` 在 OLE 格式匹配之前先检查
 `clipboard_first_file_path()`，扩展名是图片就直接走同一个投放函数，
 这样 Thunar 里复制图片再 `Ctrl+V` 得到的是图片而不是文件路径文本。
+
+### 14.9 粘完图片后光标和图片一样高
+
+图片在 riched20 里是一个 `MERF_GRAPHICS` 的 run，布局时它的
+`nAscent` 存的是**图片高度**（`run.c` 里按 `extent.cy` 写入），不是字体
+上沿。`caret.c` 的 `ME_GetCursorCoordinates()` 原来是“光标在 run 偏移 0
+时，用前一个 run 的 `nAscent + nDescent` 当光标高度”；光标刚好停在图片后面
+时，前一个 run 就是图片，于是光标高度变成 95、114 这种图片尺寸，看起来
+顶出了输入框。
+
+修法（`caret.c`）：
+
+- 往前找“尺寸参照 run”时跳过所有 `MERF_GRAPHICS`；
+- 万一参照 run 本身还是图片，改用该 run 的 `style->tm.tmAscent/tmDescent`
+  文字度量，不再用图片高度。
+
+实测粘贴 300x200、300x900、900x80 三种图片后，光标高度都稳定在 15，
+图片后继续输入文字也正常。
 
 **实测**（企业微信 5.0.13.6005，5.0.13.6005-8）：
 

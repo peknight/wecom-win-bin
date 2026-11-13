@@ -1,7 +1,7 @@
 pkgbase = wecom-win-bin
 	pkgdesc = 企业微信 Windows 客户端，基于 deepin-wine10 运行 | Tencent WeCom Windows build on deepin-wine
 	pkgver = 5.0.13.6005
-	pkgrel = 8
+	pkgrel = 9
 	url = https://work.weixin.qq.com/
 	arch = x86_64
 	license = LicenseRef-proprietary
