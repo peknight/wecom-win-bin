@@ -100,6 +100,9 @@ apply_wine_dlls() {
 	local app_dir="${WINEPREFIX}/drive_c/${WIN_APP_DIR}"
 	local dll="${SHARE}/riched20.dll"
 
+	# 调试期要往 prefix 里塞实验 DLL 时跳过同步，免得一重启就被包里那份覆盖
+	[[ ${WECOM_WIN_SKIP_DLL_SYNC:-0} == 1 ]] && return
+
 	# 只在内容变了才覆盖，避免每次启动都往 prefix 里写文件
 	if ! cmp -s "${dll}" "${app_dir}/riched20.dll"; then
 		install -Dm644 "${dll}" "${app_dir}/riched20.dll"

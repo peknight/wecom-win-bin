@@ -401,3 +401,133 @@ deepin 的 `winex11.so` 自己链了 `libpng`（`strings` 能看到 `png_read_im
 **顺带记一笔**：Xfce 的 `xfsettingsd` 带剪贴板管理器，会接管 `CLIPBOARD`，
 接管后只剩 `image/png` 一个 target（`/tmp/xtool/whoowns` 看到 owner 是
 `xfsettingsd`）。所以“TARGETS 里只有 image/png”在本机是常态，不代表数据有问题。
+
+### 14.2 企业微信拒收标准静态图片对象，强行绕过去会退出
+
+最小宿主里 `EM_CANPASTE=1`、粘完逐像素一致，但到企业微信里 `Ctrl+V` 还是
+没反应。卡点不在取图，也不在 riched20 插入失败，而在企业微信自己实现的
+OLE 回调。
+
+- riched20 插静态 DIB 之前会调宿主的
+  `IRichEditOleCallback::QueryInsertObject()`，传的 CLSID 是
+  `{00000316-0000-0000-C000-000000000046}`（`CLSID_Picture_Dib`）。
+- 企业微信对这个 CLSID 直接返回 `E_INVALIDARG`。反汇编 `WXWork.exe`
+  的 `0x03ED85C0` 可以看到：它把 GUID 逐字节和一个动态 `std::vector<GUID>`
+  比对，不在表里就返回 `E_INVALIDARG`；这张表从回调 receiver 的 vtable
+  槽 14（偏移 `0x38`）取出。
+- 用临时探针把这张表 dump 出来，一共 28 个 CLSID，全是企业微信自定义类型，
+  既没有 `Picture_Dib`，也没有 `StaticMetafile`。列表只在
+  `/tmp/wecom-olemix.log`，没进仓库。
+
+试过强行绕过（`WINE_RICHED20_BYPASS_QIO=1` 时忽略 QIO 的返回值）：
+
+- `insert_static_object()` 返回 0，输入框里确实短暂出现了缩略图。这说明
+  “取图 -> 转位图 -> 插入”这一段本身是通的。
+- 紧接着企业微信自己有序调用 `ExitProcess`。`+seh` 日志里只有
+  `DBG_PRINTEXCEPTION_*` 调试打印，没有访问违例、没有 backtrace，
+  所以不是 Wine 崩，是企业微信遍历输入框内容时碰到不认识的 OLE 对象，
+  主动退出。
+
+结论：**不能靠伪造 `Picture_Dib` 蒙过去**。企业微信后续按自己的对象模型
+处理输入框内容，硬塞进去只会把应用带崩。另外单独替换过带
+`CF_DIB -> TYMED_HGLOBAL|TYMED_ISTREAM` 修复的 `ole32`（wine 10.14
+上游已有这段），粘贴仍然走 riched20 的 `paste_dib` 并被 QIO 拒绝，
+说明 OLE 剪贴板的 TYMED 不是这条路径的关键。
+
+包内目前只保留 `paste_dib`：对普通 RichEdit 宿主有效，在企业微信里表现为
+“粘了没反应”，但不会崩。要继续修，只能走企业微信认可的对象类型，或者
+非 OLE 路径（`CF_HDROP`、企业微信自己的粘贴处理），目前还没验证完。
+
+**复现注意**：绕过版和探针版 DLL 都是临时实验产物，不在包里。用绕过版
+测试会让企业微信退出，并可能触发重新扫码登录。
+
+### 14.3 企业微信不是靠 RichEdit 的粘贴逻辑处理图片
+
+对照实验（剪贴板里放一张截图）：
+
+| 操作 | 结果 |
+|------|------|
+| 补丁版 riched20 + `Ctrl+V` | 无反应（走 riched20 `paste_dib`，被 QIO 拒） |
+| Wine 自带 riched20 + `Ctrl+V` | 无反应 |
+| 文件管理器复制图片文件 + `Ctrl+V` | 粘出来的是文件绝对路径（文本） |
+| 图片文件直接拖进输入框 | 正常出缩略图，能发送 |
+
+结论：企业微信自己的图片/文件处理链路是好的，`Ctrl+V` 根本没走到它那里。
+Wine 自带 riched20 下 `Ctrl+V` 也只是 RicEdit 的默认粘贴（文件被当成文本），
+说明缺的是“按键/粘贴消息转发给宿主”这一环。`editor.c` 顶部的兼容性清单里
+`EN_MSGFILTER` 正好标着未实现（`- EN_MSGFILTER`），而 `txthost.c` 那套
+TxTextServices 路径才有。企业微信很可能就是用 `EN_MSGFILTER` 拦 `VK_V`
+自己做剪贴板分发的，所以它从来没被通知到。
+
+下一步方向：在 riched20 里补 `EN_MSGFILTER`（键盘/鼠标消息先 `WM_NOTIFY`
+给父窗口，宿主返回非 0 就不自己处理），再看 `Ctrl+V` 是否回到企业微信
+自己的 bitmap 分支。右键菜单里的“粘贴”可以作为对照：如果菜单粘贴能出图，
+就基本坐实是快捷键消息没转发。
+
+### 14.4 输入框右键没有菜单
+
+Wine 的 `ME_ShowContextMenu()` 原来有条硬门槛：宿主没实现
+`ITextHost2`、或者没设 `IRichEditOleCallback`，就直接返回 FALSE，
+消息落到 `DefWindowProc`，于是右键什么也没有。企业微信就是这种情况——
+它既不提供 `ITextHost2`，`GetContextMenu()` 也只会失败或返回空菜单。
+
+`editor.c` 里的处理：
+
+- 拿不到宿主窗口时退到 `GetActiveWindow()` / `GetFocus()`；
+- 宿主没有 OLE 回调、或 `GetContextMenu()` 失败时，由 riched20 自己弹一个
+  Cut / Copy / Paste / Delete / Select All 菜单（`ME_PopupDefaultContextMenu`），
+  选中项直接走 `editor_handle_message()`；
+- 宿主返回 `S_OK` 但 `menu` 为 NULL 时不再兜底弹第二个。
+  之前“一次右键弹出两个菜单、一大一小”，就是宿主自己弹了一个、riched20
+  又补了一个。
+
+### 14.5 包里的 DLL 会在每次启动时盖掉 prefix 里的实验 DLL
+
+`apply_wine_dlls()` 发现 `/usr/share/wecom-win-bin/riched20.dll` 和 prefix
+里的副本不一致就用包里的覆盖。调试期手工拷进 prefix 的实验 DLL，**重启一次
+就没了**，症状是“刚修好的右键菜单又消失了”。
+
+调试时用 `WECOM_WIN_SKIP_DLL_SYNC=1 wecom-win` 跳过同步；定稿后要同时更新
+包内那份（重打 `pkgrel`），别只改 prefix。
+
+### 14.6 崩溃后的孤儿进程会把下一次启动卡死
+
+企业微信崩掉之后，CEF（`WXWorkWeb.exe`）、`WeMailNode_x64.exe`、
+`crashpad_handler.exe` 这些子进程会变成孤儿继续挂着，占着单实例通道。
+新启动的 `WXWork.exe` 会停在
+`Log/MobileFramework/<日期>.log` 的最后一行 `WeWork AppLaunch`，
+既不建窗口也不退出，看起来像“启动失败”。
+
+处理办法：把这几类进程连同 `wineserver` 一起清掉再启动。
+
+```bash
+ps -eo pid=,args= | grep -E 'WXWork\.exe|WXWorkWeb|WeMailNode|crashpad_handler'
+# kill 掉上面这些 pid
+WINEPREFIX="$HOME/.local/share/wineprefixes/wecom-win" \
+    /opt/deepin-wine10-stable/bin/wineserver -k
+```
+
+### 14.7 撤销“插入图片”会 assert 掉整个企业微信
+
+测试 OLE 投放时，往输入框里插进一张图再按撤销，企业微信直接闪退。
+`+richedit` 日志里是：
+
+```text
+err:msvcrt:_wassert (L"run->reobj",L"../../dlls/riched20/richole.c",5717)
+```
+
+根因在 `undo.c`：`editor_insert_oleobj()` 是“先 `run_insert()` 建一个
+`MERF_GRAPHICS` 的 run，再把 `ME_ReObject` 挂上去”，但撤销项里只存了
+文本和 flags。撤销/重做重新 `run_insert()` 时 `reobj` 是空的，
+布局阶段 `ME_GetOLEObjectSize()` / `draw_ole()` 的
+`assert(run->reobj)` 就把进程 abort 了。
+
+修法（`wine-riched20-wecom.patch`）：
+
+- `undo.c` 回放插入时清掉 `MERF_GRAPHICS`，降级成空的占位 run；
+- `richole.c` 的 `ME_GetOLEObjectSize()` / `draw_ole()` 和
+  `writer.c` 的 `stream_out_graphics()` 对 `reobj == NULL` 做保护，
+  算 0 尺寸 / 直接返回，不再 assert。
+
+**注意**：`assert` 在 `WINEDEBUG=-all` 下不会打到日志，所以带着补丁版 DLL
+闪退时看不到这行，别以为它不存在。

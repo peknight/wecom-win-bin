@@ -2,7 +2,7 @@
 
 pkgname=wecom-win-bin
 pkgver=5.0.13.6005
-pkgrel=6
+pkgrel=7
 pkgdesc='企业微信 Windows 客户端，基于 deepin-wine10 运行 | Tencent WeCom Windows build on deepin-wine'
 arch=('x86_64')
 url='https://work.weixin.qq.com/'
@@ -32,7 +32,7 @@ makedepends=(
 source=(
     "WeCom_${pkgver}.exe::https://dldir1.qq.com/wework/work_weixin/WeCom_${pkgver}.exe"
     "wine-${_winever}.tar.xz::https://dl.winehq.org/wine/source/${_winever%.*}.x/wine-${_winever}.tar.xz"
-    'wine-riched20-paste-dib.patch'
+    'wine-riched20-wecom.patch'
     'make-tahoma.py'
     'wecom-win.sh'
     'wecom-win.desktop'
@@ -57,7 +57,7 @@ build_riched20() {
     cd "$srcdir/wine-${_winever}"
     # 重复构建时源码树可能已经打过补丁了
     grep -q paste_dib dlls/riched20/editor.c ||
-        patch -Np1 -i "$srcdir/wine-riched20-paste-dib.patch"
+        patch -Np1 -i "$srcdir/wine-riched20-wecom.patch"
 
     mkdir -p "$srcdir/wine-build"
     cd "$srcdir/wine-build"

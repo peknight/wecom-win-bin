@@ -1,0 +1,433 @@
+--- a/dlls/riched20/caret.c
++++ b/dlls/riched20/caret.c
+@@ -468,9 +468,12 @@
+ 
+   if (editor->lpOleCallback)
+   {
+-    hr = IRichEditOleCallback_QueryInsertObject(editor->lpOleCallback, (LPCLSID)&reo->clsid, reo->pstg, REO_CP_SELECTION);
+-    if (hr != S_OK)
+-      return hr;
++    /* Pass the real insertion offset rather than REO_CP_SELECTION: the host
++     * validates the object against it, and WeCom rejects the -1 placeholder. */
++    hr = IRichEditOleCallback_QueryInsertObject(editor->lpOleCallback, (LPCLSID)&reo->clsid, reo->pstg, reo->cp);
++    TRACE("QueryInsertObject clsid %s storage %p cp %ld -> %#lx\n",
++          debugstr_guid(&reo->clsid), reo->pstg, reo->cp, hr);
++    if (hr != S_OK) return hr;
+   }
+ 
+   extent = reo->sizel;
+--- a/dlls/riched20/editor.c
++++ b/dlls/riched20/editor.c
+@@ -1111,7 +1111,7 @@
+ }
+ 
+ static HRESULT insert_static_object(ME_TextEditor *editor, HENHMETAFILE hemf, HBITMAP hbmp,
+-                                    const SIZEL* sz)
++                                    const SIZEL* sz, LONG cp)
+ {
+   LPOLEOBJECT         lpObject = NULL;
+   LPSTORAGE           lpStorage = NULL;
+@@ -1121,6 +1121,7 @@
+   STGMEDIUM           stgm;
+   FORMATETC           fm;
+   CLSID               clsid;
++  const CLSID        *static_clsid;
+   HRESULT             hr = E_FAIL;
+   DWORD               conn;
+ 
+@@ -1129,12 +1130,14 @@
+       stgm.tymed = TYMED_ENHMF;
+       stgm.hEnhMetaFile = hemf;
+       fm.cfFormat = CF_ENHMETAFILE;
++      static_clsid = &CLSID_StaticMetafile;
+   }
+   else if (hbmp)
+   {
+       stgm.tymed = TYMED_GDI;
+       stgm.hBitmap = hbmp;
+       fm.cfFormat = CF_BITMAP;
++      static_clsid = &CLSID_Picture_Dib;
+   }
+   else return E_FAIL;
+ 
+@@ -1145,19 +1148,34 @@
+   fm.lindex = -1;
+   fm.tymed = stgm.tymed;
+ 
+-  if (OleCreateDefaultHandler(&CLSID_NULL, NULL, &IID_IOleObject, (void**)&lpObject) == S_OK &&
+-      IRichEditOle_GetClientSite(editor->richole, &lpClientSite) == S_OK &&
+-      IOleObject_SetClientSite(lpObject, lpClientSite) == S_OK &&
+-      IOleObject_GetUserClassID(lpObject, &clsid) == S_OK &&
+-      IOleObject_QueryInterface(lpObject, &IID_IOleCache, (void**)&lpOleCache) == S_OK &&
+-      IOleCache_Cache(lpOleCache, &fm, 0, &conn) == S_OK &&
+-      IOleObject_QueryInterface(lpObject, &IID_IDataObject, (void**)&lpDataObject) == S_OK &&
+-      IDataObject_SetData(lpDataObject, &fm, &stgm, TRUE) == S_OK)
++  /* Windows creates these objects as CLSID_Picture_Dib/CLSID_StaticMetafile and
++   * asks the host for a storage first; some apps (e.g. WeCom) reject a NULL
++   * storage or CLSID_NULL in IRichEditOleCallback::QueryInsertObject(). */
++  if (editor->lpOleCallback)
++  {
++    HRESULT storage_hr = IRichEditOleCallback_GetNewStorage( editor->lpOleCallback, &lpStorage );
++    TRACE("GetNewStorage callback %p -> %#lx storage %p\n",
++          editor->lpOleCallback, storage_hr, lpStorage);
++    if (FAILED( storage_hr )) lpStorage = NULL;
++  }
++
++  /* Cache() returns CACHE_S_SAMECACHE when the class already has an
++   * automatic entry (CLSID_Picture_Dib has a CF_DIB one). */
++  if (FAILED(hr = OleCreateDefaultHandler(static_clsid, NULL, &IID_IOleObject, (void**)&lpObject)) ||
++      FAILED(hr = IRichEditOle_GetClientSite(editor->richole, &lpClientSite)) ||
++      FAILED(hr = IOleObject_SetClientSite(lpObject, lpClientSite)) ||
++      FAILED(hr = IOleObject_GetUserClassID(lpObject, &clsid)) ||
++      FAILED(hr = IOleObject_QueryInterface(lpObject, &IID_IOleCache, (void**)&lpOleCache)) ||
++      FAILED(hr = IOleCache_Cache(lpOleCache, &fm, 0, &conn)) ||
++      FAILED(hr = IOleObject_QueryInterface(lpObject, &IID_IDataObject, (void**)&lpDataObject)) ||
++      FAILED(hr = IDataObject_SetData(lpDataObject, &fm, &stgm, TRUE)))
++    TRACE("failed to build static object, hr %#lx\n", hr);
++  else
+   {
+     REOBJECT            reobject;
+ 
+     reobject.cbStruct = sizeof(reobject);
+-    reobject.cp = REO_CP_SELECTION;
++    reobject.cp = cp;
+     reobject.clsid = clsid;
+     reobject.poleobj = lpObject;
+     reobject.pstg = lpStorage;
+@@ -1337,11 +1355,11 @@
+         {
+         case gfx_enhmetafile:
+             if ((hemf = SetEnhMetaFileBits( size, buffer )))
+-                insert_static_object( info->editor, hemf, NULL, &sz );
++                insert_static_object( info->editor, hemf, NULL, &sz, REO_CP_SELECTION );
+             break;
+         case gfx_metafile:
+             if ((hemf = SetWinMetaFileBits( size, buffer, NULL, &mfp )))
+-                insert_static_object( info->editor, hemf, NULL, &sz );
++                insert_static_object( info->editor, hemf, NULL, &sz, REO_CP_SELECTION );
+             break;
+         case gfx_dib:
+         {
+@@ -1355,7 +1373,7 @@
+             if ((hbmp = CreateDIBitmap( hdc, &bi->bmiHeader,
+                                         CBM_INIT, (char*)(bi + 1) + nc * sizeof(RGBQUAD),
+                                         bi, DIB_RGB_COLORS)) )
+-                insert_static_object( info->editor, NULL, hbmp, &sz );
++                insert_static_object( info->editor, NULL, hbmp, &sz, REO_CP_SELECTION );
+             ReleaseDC( 0, hdc );
+             break;
+         }
+@@ -2231,9 +2249,19 @@
+ static HRESULT paste_emf(ME_TextEditor *editor, FORMATETC *fmt, STGMEDIUM *med)
+ {
+     HRESULT hr;
++    ENHMETAHEADER header;
+     SIZEL sz = {0, 0};
+ 
+-    hr = insert_static_object( editor, med->hEnhMetaFile, NULL, &sz );
++    /* Wine synthesizes this metafile from the X11 bitmap and records the
++     * picture extent in rclFrame (0.01 mm). A zero object size produces an
++     * invisible 0x0 object, so convert the frame to twips instead. */
++    if (GetEnhMetaFileHeader( med->hEnhMetaFile, sizeof(header), &header ))
++    {
++        sz.cx = MulDiv( header.rclFrame.right - header.rclFrame.left, 1440, 2540 );
++        sz.cy = MulDiv( header.rclFrame.bottom - header.rclFrame.top, 1440, 2540 );
++    }
++
++    hr = insert_static_object( editor, med->hEnhMetaFile, NULL, &sz, ME_GetCursorOfs( editor->pCursors ) );
+     if (SUCCEEDED(hr))
+     {
+         ME_CommitUndo( editor );
+@@ -2245,6 +2273,76 @@
+     return hr;
+ }
+ 
++/* The X11 driver exports clipboard images as CF_DIB only, and ole32 reports
++ * TYMED_NULL for that format, so no OLE paste format ever matches. Read the
++ * bitmap straight from user32 and insert it as a static object instead. */
++static HRESULT paste_dib(ME_TextEditor *editor)
++{
++    HGLOBAL hmem;
++    BITMAPINFO *bmi;
++    HBITMAP hbmp = NULL;
++    void *dst = NULL;
++    const BYTE *src;
++    SIZE_T image_size, src_offset;
++    SIZEL sz;
++    HRESULT hr;
++    int width, height;
++
++    if (!OpenClipboard( NULL )) return E_FAIL;
++    if (!(hmem = GetClipboardData( CF_DIB )) || !(bmi = GlobalLock( hmem )))
++    {
++        CloseClipboard();
++        TRACE("paste_dib: no CF_DIB (hmem %p)\n", hmem);
++        return E_FAIL;
++    }
++
++    width = bmi->bmiHeader.biWidth;
++    height = abs( bmi->bmiHeader.biHeight );
++    image_size = bmi->bmiHeader.biSizeImage;
++    if (!image_size && width > 0 && height > 0)
++        image_size = ((width * bmi->bmiHeader.biBitCount + 31) / 32) * 4 * height;
++
++    src_offset = bmi->bmiHeader.biSize;
++    if (bmi->bmiHeader.biCompression == BI_BITFIELDS)
++        src_offset += 12;
++    else if (bmi->bmiHeader.biBitCount <= 8)
++        src_offset += (1 << bmi->bmiHeader.biBitCount) * sizeof(RGBQUAD);
++
++    if (width > 0 && height > 0 && image_size &&
++        src_offset + image_size <= GlobalSize( hmem ))
++    {
++        src = (const BYTE *)bmi + src_offset;
++        hbmp = CreateDIBSection( NULL, bmi, DIB_RGB_COLORS, &dst, NULL, 0 );
++        if (hbmp)
++            memcpy( dst, src, image_size );
++    }
++    TRACE("paste_dib: globalsize %lu width %d height %d bpp %d comp %d "
++          "image_size %lu src_offset %lu hbmp %p\n",
++          (unsigned long)GlobalSize( hmem ), width, height,
++          bmi->bmiHeader.biBitCount, bmi->bmiHeader.biCompression,
++          (unsigned long)image_size, (unsigned long)src_offset, hbmp);
++    GlobalUnlock( hmem );
++    CloseClipboard();
++
++    if (!hbmp) return E_FAIL;
++
++    /* assume the picture is meant for a 96 dpi display, as Windows does */
++    sz.cx = MulDiv( width, 1440, 96 );
++    sz.cy = MulDiv( height, 1440, 96 );
++
++    hr = insert_static_object( editor, NULL, hbmp, &sz, ME_GetCursorOfs( editor->pCursors ) );
++    TRACE("paste_dib: insert_static_object -> %lx\n", (unsigned long)hr);
++    if (FAILED( hr ))
++    {
++        DeleteObject( hbmp );
++        return hr;
++    }
++
++    ME_CommitUndo( editor );
++    ME_UpdateRepaint( editor, FALSE );
++    return hr;
++}
++
+ static struct paste_format
+ {
+     FORMATETC fmt;
+@@ -2318,6 +2416,15 @@
+ done:
+     IDataObject_Release( data );
+ 
++    /* no OLE format matched, fall back to the raw clipboard bitmap */
++    if (hr != S_OK && (!cf || cf == CF_DIB || cf == CF_BITMAP))
++    {
++        if (check_only)
++            hr = IsClipboardFormatAvailable( CF_DIB ) ? S_OK : E_FAIL;
++        else
++            hr = paste_dib( editor );
++    }
++
+     return hr == S_OK;
+ }
+ 
+@@ -2903,26 +3010,102 @@
+     return sel_type;
+ }
+ 
++static void ME_PopupDefaultContextMenu(ME_TextEditor *editor, int x, int y, HWND owner)
++{
++    CHARRANGE sel;
++    HMENU menu;
++    HRESULT hr;
++    UINT id;
++
++    ME_GetSelectionOfs( editor, &sel.cpMin, &sel.cpMax );
++    if (!(menu = CreatePopupMenu()))
++    {
++        ERR("could not create context menu\n");
++        return;
++    }
++    AppendMenuW( menu, MF_STRING | (sel.cpMax > sel.cpMin ? 0 : MF_GRAYED), 1, L"Cut" );
++    AppendMenuW( menu, MF_STRING | (sel.cpMax > sel.cpMin ? 0 : MF_GRAYED), 2, L"Copy" );
++    AppendMenuW( menu, MF_STRING, 3, L"Paste" );
++    AppendMenuW( menu, MF_SEPARATOR, 0, NULL );
++    AppendMenuW( menu, MF_STRING | (sel.cpMax > sel.cpMin ? 0 : MF_GRAYED), 4, L"Delete" );
++    AppendMenuW( menu, MF_STRING, 5, L"Select All" );
++    id = TrackPopupMenu( menu, TPM_LEFTALIGN | TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY,
++                         x, y, 0, owner, NULL );
++    TRACE("default menu %p owner %p at %d,%d -> id %u, last error %lu\n",
++          menu, owner, x, y, id, GetLastError());
++    DestroyMenu( menu );
++
++    switch (id)
++    {
++    case 1: editor_handle_message( editor, WM_CUT, 0, 0, &hr ); break;
++    case 2: editor_handle_message( editor, WM_COPY, 0, 0, &hr ); break;
++    case 3: editor_handle_message( editor, WM_PASTE, 0, 0, &hr ); break;
++    case 4: ME_DeleteSelection( editor ); break;
++    case 5: editor_handle_message( editor, EM_SETSEL, 0, -1, &hr ); break;
++    default: break;
++    }
++}
++
+ static BOOL ME_ShowContextMenu(ME_TextEditor *editor, int x, int y)
+ {
+     CHARRANGE selrange;
+-    HMENU menu;
++    HMENU menu = NULL;
+     int seltype;
+     HWND hwnd, parent;
++    HRESULT hr;
+ 
+-    if (!editor->lpOleCallback || !editor->have_texthost2) return FALSE;
+-    if (FAILED( ITextHost2_TxGetWindow( editor->texthost, &hwnd ))) return FALSE;
+-    parent = GetParent( hwnd );
+-    if (!parent) parent = hwnd;
++    hwnd = NULL;
++    if (editor->have_texthost2 && SUCCEEDED( ITextHost2_TxGetWindow( editor->texthost, &hwnd ) ) && hwnd)
++    {
++        parent = GetParent( hwnd );
++        if (!parent) parent = hwnd;
++    }
++    else
++    {
++        /* A host missing ITextHost2 may have no window, or its TxGetWindow slot
++         * is not safe to call. Fall back to a window owned by this thread. */
++        parent = GetActiveWindow();
++        if (!parent) parent = GetFocus();
++        TRACE("no usable TxGetWindow, using owner %p\n", parent);
++    }
++
++    if (!editor->lpOleCallback)
++    {
++        TRACE("no OLE callback, TextHost2 %d\n", editor->have_texthost2);
++        if (parent)
++        {
++            ME_PopupDefaultContextMenu( editor, x, y, parent );
++            return TRUE;
++        }
++        return FALSE;
++    }
+ 
+     ME_GetSelectionOfs( editor, &selrange.cpMin, &selrange.cpMax );
+     seltype = ME_GetSelectionType( editor );
+-    if (SUCCEEDED( IRichEditOleCallback_GetContextMenu( editor->lpOleCallback, seltype, NULL, &selrange, &menu ) ))
++    TRACE("calling GetContextMenu, seltype %d, range %ld..%ld\n", seltype, selrange.cpMin, selrange.cpMax);
++    hr = IRichEditOleCallback_GetContextMenu( editor->lpOleCallback, seltype, NULL, &selrange, &menu );
++    TRACE("GetContextMenu(seltype %d) -> %#lx, menu %p, owner %p\n", seltype, hr, menu, parent);
++    if (SUCCEEDED(hr))
+     {
+-        TrackPopupMenu( menu, TPM_LEFTALIGN | TPM_RIGHTBUTTON, x, y, 0, parent, NULL );
+-        DestroyMenu( menu );
++        /* S_OK means the host took care of the menu itself. Some hosts return
++         * a NULL menu and pop up their own unowned window, so do not add a
++         * second menu in that case. */
++        if (menu)
++        {
++            if (parent)
++                TrackPopupMenu( menu, TPM_LEFTALIGN | TPM_RIGHTBUTTON, x, y, 0, parent, NULL );
++            DestroyMenu( menu );
++        }
++        return TRUE;
+     }
+-    return TRUE;
++
++    TRACE("host declined the context menu (%#lx), using the built-in one\n", hr);
++    if (parent)
++    {
++        ME_PopupDefaultContextMenu( editor, x, y, parent );
++        return TRUE;
++    }
++    return FALSE;
+ }
+ 
+ ME_TextEditor *ME_MakeEditor(ITextHost *texthost, BOOL bEmulateVersion10)
+@@ -3937,6 +4120,7 @@
+     link_notify( editor, msg, wParam, lParam );
+     goto do_default;
+   case WM_CONTEXTMENU:
++    TRACE("WM_CONTEXTMENU at %d,%d\n", (short)LOWORD(lParam), (short)HIWORD(lParam));
+     if (!ME_ShowContextMenu(editor, (short)LOWORD(lParam), (short)HIWORD(lParam)))
+       goto do_default;
+     break;
+--- a/dlls/riched20/richole.c
++++ b/dlls/riched20/richole.c
+@@ -1375,6 +1375,19 @@
+ 
+     if (reo->cbStruct < sizeof(*reo)) return STG_E_INVALIDPARAMETER;
+ 
++    {
++        CLSID user_clsid;
++        HRESULT user_hr = E_FAIL;
++
++        if (reo->poleobj)
++            user_hr = IOleObject_GetUserClassID( reo->poleobj, &user_clsid );
++        TRACE("InsertObject clsid %s userclsid %s (hr %#lx) cp %ld flags %#lx user %#lx size %ldx%ld obj %p site %p stg %p\n",
++              debugstr_guid(&reo->clsid),
++              SUCCEEDED(user_hr) ? debugstr_guid(&user_clsid) : "-", user_hr,
++              reo->cp, reo->dwFlags, reo->dwUser, reo->sizel.cx, reo->sizel.cy,
++              reo->poleobj, reo->polesite, reo->pstg);
++    }
++
+     hr = editor_insert_oleobj(services->editor, reo);
+     if (hr != S_OK)
+         return hr;
+@@ -5713,8 +5726,14 @@
+   DIBSECTION    dibsect;
+   ENHMETAHEADER emh;
+ 
+-  assert(run->nFlags & MERF_GRAPHICS);
+-  assert(run->reobj);
++  /* Undo/redo or a failed object creation can leave a graphics run without
++   * its object; report a zero extent instead of aborting on an assert. */
++  if (!(run->nFlags & MERF_GRAPHICS) || !run->reobj)
++  {
++    pSize->cx = 0;
++    pSize->cy = 0;
++    return;
++  }
+ 
+   if (run->reobj->obj.sizel.cx != 0 || run->reobj->obj.sizel.cy != 0)
+   {
+@@ -5796,10 +5815,7 @@
+   HBITMAP       old_bm;
+   RECT          rc;
+ 
+-  assert(run->nFlags & MERF_GRAPHICS);
+-  assert(run->reobj);
+-
+-  if (!run->reobj->obj.poleobj) return;
++  if (!run->reobj || !run->reobj->obj.poleobj) return;
+ 
+   if (SUCCEEDED(IOleObject_QueryInterface(run->reobj->obj.poleobj, &IID_IViewObject, (void**)&ivo)))
+   {
+--- a/dlls/riched20/undo.c
++++ b/dlls/riched20/undo.c
+@@ -355,9 +355,13 @@
+   {
+     ME_Cursor tmp;
+     cursor_from_char_ofs( editor, undo->u.insert_run.pos, &tmp );
++    /* editor_insert_oleobj() creates the run and its ME_ReObject together,
++     * but the undo item only stores the run text and flags. Replaying it as
++     * a MERF_GRAPHICS run without a reobj aborts later during layout, so
++     * degrade an undone object insertion to a plain placeholder run. */
+     run_insert( editor, &tmp, undo->u.insert_run.style,
+                 undo->u.insert_run.str, undo->u.insert_run.len,
+-                undo->u.insert_run.flags );
++                undo->u.insert_run.flags & ~MERF_GRAPHICS );
+     break;
+   }
+   case undo_delete_run:
+--- a/dlls/riched20/writer.c
++++ b/dlls/riched20/writer.c
+@@ -939,6 +939,9 @@
+     ME_Context c;
+     HDC hdc;
+ 
++    /* A graphics run left behind by undo has no object to stream out. */
++    if (!run->reobj) return TRUE;
++
+     hr = IOleObject_QueryInterface( run->reobj->obj.poleobj, &IID_IDataObject, (void **)&data );
+     if (FAILED(hr)) return FALSE;
+ 

@@ -75,15 +75,21 @@ deepin 补丁 dll（`WINEPREDLL`），实测默认 prefix 不需要，所以 1.0
 
 ## 已经处理掉的坑
 
-启动器里现在带了三处运行期补丁，细节都在 `PITFALLS.md`：
+启动器里现在带了几处运行期补丁，细节都在 `PITFALLS.md`：
 
 - 输入框汉字方框：把文泉驿微米黑派生成 Tahoma（`fontfix` 可重打）
 - `Industry News` / `Request for use` 等 CEF 弹窗白屏：启动时传
   `--js-flags=--no-freeze-flags-after-init`
-- 剪贴板里的图片粘不进输入框：构建期用补丁源码编一份 `riched20.dll`
-  （`PKGBUILD` 里的 `build_riched20`），启动器放进 prefix 并走 native override
+- 输入框右键没有菜单：补丁版 `riched20.dll` 在宿主不提供
+  `ITextHost2` / `IRichEditOleCallback` 时自己弹默认菜单（14.4）
+- 撤销刚插入的图片会闪退：补丁版 `riched20.dll` 不再对空 `reobj` 断言（14.7）
 
 ## 已知问题
+
+- 剪贴板里的图片粘不进企业微信输入框：包内补丁版 `riched20.dll` 能让普通
+  RichEdit 宿主正常粘 `CF_DIB`，但企业微信自己的
+  `IRichEditOleCallback::QueryInsertObject()` 拒收标准图片 CLSID，强行绕过
+  会让企业微信退出，详见 `PITFALLS.md` 14.2。
 
 官方 Windows 包里带一套 OpenGL 能力探测（`win32-test.exe` /
 `win32_voip_test.exe`）和兆芯 GLX 兜底逻辑，本包没有照搬，因为没有证据表明
