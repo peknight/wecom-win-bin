@@ -1,0 +1,107 @@
+--- a/dlls/riched20/editor.c
++++ b/dlls/riched20/editor.c
+@@ -2231,8 +2231,18 @@
+ static HRESULT paste_emf(ME_TextEditor *editor, FORMATETC *fmt, STGMEDIUM *med)
+ {
+     HRESULT hr;
++    ENHMETAHEADER header;
+     SIZEL sz = {0, 0};
+ 
++    /* Wine synthesizes this metafile from the X11 bitmap and records the
++     * picture extent in rclFrame (0.01 mm). A zero object size produces an
++     * invisible 0x0 object, so convert the frame to twips instead. */
++    if (GetEnhMetaFileHeader( med->hEnhMetaFile, sizeof(header), &header ))
++    {
++        sz.cx = MulDiv( header.rclFrame.right - header.rclFrame.left, 1440, 2540 );
++        sz.cy = MulDiv( header.rclFrame.bottom - header.rclFrame.top, 1440, 2540 );
++    }
++
+     hr = insert_static_object( editor, med->hEnhMetaFile, NULL, &sz );
+     if (SUCCEEDED(hr))
+     {
+@@ -2245,6 +2255,69 @@
+     return hr;
+ }
+ 
++/* The X11 driver exports clipboard images as CF_DIB only, and ole32 reports
++ * TYMED_NULL for that format, so no OLE paste format ever matches. Read the
++ * bitmap straight from user32 and insert it as a static object instead. */
++static HRESULT paste_dib(ME_TextEditor *editor)
++{
++    HGLOBAL hmem;
++    BITMAPINFO *bmi;
++    HBITMAP hbmp = NULL;
++    void *dst = NULL;
++    const BYTE *src;
++    SIZE_T image_size, src_offset;
++    SIZEL sz;
++    HRESULT hr;
++    int width, height;
++
++    if (!OpenClipboard( NULL )) return E_FAIL;
++    if (!(hmem = GetClipboardData( CF_DIB )) || !(bmi = GlobalLock( hmem )))
++    {
++        CloseClipboard();
++        return E_FAIL;
++    }
++
++    width = bmi->bmiHeader.biWidth;
++    height = abs( bmi->bmiHeader.biHeight );
++    image_size = bmi->bmiHeader.biSizeImage;
++    if (!image_size && width > 0 && height > 0)
++        image_size = ((width * bmi->bmiHeader.biBitCount + 31) / 32) * 4 * height;
++
++    src_offset = bmi->bmiHeader.biSize;
++    if (bmi->bmiHeader.biCompression == BI_BITFIELDS)
++        src_offset += 12;
++    else if (bmi->bmiHeader.biBitCount <= 8)
++        src_offset += (1 << bmi->bmiHeader.biBitCount) * sizeof(RGBQUAD);
++
++    if (width > 0 && height > 0 && image_size &&
++        src_offset + image_size <= GlobalSize( hmem ))
++    {
++        src = (const BYTE *)bmi + src_offset;
++        hbmp = CreateDIBSection( NULL, bmi, DIB_RGB_COLORS, &dst, NULL, 0 );
++        if (hbmp)
++            memcpy( dst, src, image_size );
++    }
++    GlobalUnlock( hmem );
++    CloseClipboard();
++
++    if (!hbmp) return E_FAIL;
++
++    /* assume the picture is meant for a 96 dpi display, as Windows does */
++    sz.cx = MulDiv( width, 1440, 96 );
++    sz.cy = MulDiv( height, 1440, 96 );
++
++    hr = insert_static_object( editor, NULL, hbmp, &sz );
++    if (FAILED( hr ))
++    {
++        DeleteObject( hbmp );
++        return hr;
++    }
++
++    ME_CommitUndo( editor );
++    ME_UpdateRepaint( editor, FALSE );
++    return hr;
++}
++
+ static struct paste_format
+ {
+     FORMATETC fmt;
+@@ -2318,6 +2391,15 @@
+ done:
+     IDataObject_Release( data );
+ 
++    /* no OLE format matched, fall back to the raw clipboard bitmap */
++    if (hr != S_OK && (!cf || cf == CF_DIB || cf == CF_BITMAP))
++    {
++        if (check_only)
++            hr = IsClipboardFormatAvailable( CF_DIB ) ? S_OK : E_FAIL;
++        else
++            hr = paste_dib( editor );
++    }
++
+     return hr == S_OK;
+ }
+ 

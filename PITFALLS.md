@@ -315,3 +315,60 @@ export WINEDLLOVERRIDES='concrt140=n,b'
 
 **注意**：别去补 Wine 的 concrt140 实现，也别改 `wwmapp` 的调用点；这个
 构造函数属于 MSVC 内部 ABI，用微软原版 DLL 才是正路。
+
+## 14. 从浏览器/截图工具复制的图片粘不进输入框
+
+**现象**：复制文字能粘进聊天输入框，复制图片（截图工具、浏览器里右键复制图片）
+粘进去什么都不出现，`Ctrl+V` 连个缩略图都没有。老的 deepin deb 版没这个问题。
+
+**原因**：三层叠在一起。
+
+1. X11 驱动往剪贴板里放的图片只有 `CF_DIB`、`CF_DIBV5`、`CF_BITMAP`，
+   不会有 `CF_ENHMETAFILE`（`xclip -o -t TARGETS` 能看到）。
+2. wine 的 `ole32` 对 `CF_DIB` 的 `FORMATETC` 返回 `TYMED_NULL`，也就是
+   没法通过 `IDataObject` 把它交出去。所以 `WM_PASTE` 走 OLE 一遭，
+   所有格式都对不上，直接判定“没东西可粘”。
+3. `riched20` 的 `paste_formats[]` 只有三个：RTF、`CF_UNICODETEXT`、
+   `CF_ENHMETAFILE`。文字能粘就是因为第二个命中；图片一个都不命中。
+
+顺带查出同一条链上的第二个 bug：`paste_emf()` 调 `insert_static_object()`
+时尺寸写死成 `{0, 0}`，即使 EMF 路径命中也会插入一个 0×0 的不可见对象
+（`editor_insert_oleobj()` 只在尺寸为 0 时才去问 `IOleObject_GetExtent`，
+而 wine 的 default handler 给不出结果，最后还是 0×0）。
+
+**解法**：`wine-riched20-paste-dib.patch`，改的是 `dlls/riched20/editor.c`：
+
+- 新增 `paste_dib()`：直接用 user32 的 `GetClipboardData(CF_DIB)` 取位图，
+  `CreateDIBSection` 拷一份，按 96 dpi 换算成 twips，再走
+  `insert_static_object(editor, NULL, hbmp, &sz)` 插成静态对象。
+- `paste_special()` 在所有 OLE 格式都不匹配后兜底调它；`check_only`
+  （`EM_CANPASTE`）分支只看 `IsClipboardFormatAvailable(CF_DIB)`，不再误报 0。
+- `paste_emf()` 从 `ENHMETAHEADER.rclFrame`（0.01mm）换算 twips 当对象尺寸，
+  修掉 0×0。
+
+**打包方式**：不打包整个 wine，只从对应版本的 wine 源码编这一个 DLL。
+
+- `source` 里带 `wine-10.14.tar.xz`（`_winever`，和
+  `deepin-wine10-stable` 的 wine 版本对齐），只 `--enable-archs=i386`，
+  X11/音频/网络全部 `--without-*`，`make dlls/riched20/i386-windows/riched20.dll`
+  实测整条链路 22 秒。
+- 产物装到 `/usr/share/wecom-win-bin/riched20.dll`，启动器的
+  `apply_wine_dlls()` 用 `cmp -s` 比对后拷进 prefix 的
+  `Program Files (x86)/WXWork/`。DLL 搜索顺序里 exe 所在目录排第一，
+  所以 `WXWork.exe` 会加载到它。
+- `WINEDLLOVERRIDES='concrt140=n,b;riched20=n,b'`，留 builtin 兜底，
+  免得别的子进程（比如 WeMeet 里的）找不到原生副本就起不来。
+
+**必须踩的两个坑**：
+
+- **winebuild 盖的 `Wine builtin DLL` 签名要去掉。** 留着它 wine 会把这份
+  PE 当 builtin，去找配套的 `riched20.so`，找不到就 `LoadLibrary` 失败
+  126，日志里只会看到 `load failed 126`，很容易以为是别的问题。构建里用
+  `grep -abo` 定位签名再覆 32 字节 0。
+- **测试宿主要有消息循环。** 用一个最小 32 位 `RichEdit20W` 宿主验证时，
+  如果只 `WM_PASTE` 然后 `Sleep`，`ME_UpdateRepaint()` 只是
+  `InvalidateRect`，没有消息循环就永远不重绘，看起来像“对象插进去了但没画出来”，
+  白白多查一轮。要么 `UpdateWindow()`，要么老老实实 `PeekMessage` 泵消息。
+
+**验证**：最小宿主里 `EM_CANPASTE` 返回 1；粘一张 240×160 的渐变图后用
+`magick compare -metric AE` 比窗口截图和源图，`AE=0`（逐像素一致）。

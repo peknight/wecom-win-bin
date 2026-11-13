@@ -68,7 +68,10 @@ setup_wine_env() {
 	# concrt140.dll 只是个 stub，调用即 EXCEPTION_WINE_STUB 中止，表现为
 	# “加入快速会议”转圈后进程闪退。优先加载程序目录里的原生 concrt140；
 	# 别的进程找不到原生副本时仍回退 builtin，避免影响主程序启动。
-	export WINEDLLOVERRIDES='concrt140=n,b'
+	#
+	# riched20 是我们自己编的补丁版（支持把剪贴板图片粘进输入框），
+	# 由 apply_wine_dlls 放进应用目录；同样留 builtin 兜底。
+	export WINEDLLOVERRIDES='concrt140=n,b;riched20=n,b'
 }
 
 app_installed() {
@@ -93,6 +96,17 @@ apply_protocols() {
 	message "workbuddy:// 协议已注册（转发到宿主 xdg-open）"
 }
 
+apply_wine_dlls() {
+	local app_dir="${WINEPREFIX}/drive_c/${WIN_APP_DIR}"
+	local dll="${SHARE}/riched20.dll"
+
+	# 只在内容变了才覆盖，避免每次启动都往 prefix 里写文件
+	if ! cmp -s "${dll}" "${app_dir}/riched20.dll"; then
+		install -Dm644 "${dll}" "${app_dir}/riched20.dll"
+		message "riched20 补丁已更新（剪贴板图片粘贴）"
+	fi
+}
+
 ensure_prefix() {
 	if [[ ! -d "${WINEPREFIX}/drive_c" ]]; then
 		message "初始化 wine prefix: ${WINEPREFIX}"
@@ -111,6 +125,7 @@ ensure_prefix() {
 
 	apply_fonts
 	apply_protocols
+	apply_wine_dlls
 }
 
 launch() {

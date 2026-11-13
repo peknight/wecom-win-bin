@@ -13,9 +13,10 @@
 makepkg -si
 ```
 
-构建期从官方 exe 里抠图标，并把文泉驿微米黑派生成 Tahoma（见 `PITFALLS.md`），
-所以要 `icoutils`、`python-fonttools` 和 `wqy-microhei`；下载的安装包约 660M，
-最终包装出约 1.9G。
+构建期从官方 exe 里抠图标、把文泉驿微米黑派生成 Tahoma（见 `PITFALLS.md`），
+再从对应版本的 wine 源码里编一份打过补丁的 32 位 `riched20.dll`（只编这一个
+DLL，二十来秒），所以要 `icoutils`、`python-fonttools`、`wqy-microhei` 和
+`mingw-w64-gcc`；下载的安装包约 660M，最终包装出约 1.9G。
 
 ## 首次运行
 
@@ -72,10 +73,17 @@ deepin 补丁 dll（`WINEPREDLL`），实测默认 prefix 不需要，所以 1.0
 `conflicts=('com.qq.weixin.work.deepin')`，两者不能共存。想装本包就得先卸掉
 `wecom-bin`。
 
-## 已知问题
+## 已经处理掉的坑
 
-`Industry News` 之类的内嵌资讯窗口在 deepin-wine 下可能是空白的。Windows/macOS
-上正常，属于 wine 侧渲染差异，本包没有解决。
+启动器里现在带了三处运行期补丁，细节都在 `PITFALLS.md`：
+
+- 输入框汉字方框：把文泉驿微米黑派生成 Tahoma（`fontfix` 可重打）
+- `Industry News` / `Request for use` 等 CEF 弹窗白屏：启动时传
+  `--js-flags=--no-freeze-flags-after-init`
+- 剪贴板里的图片粘不进输入框：构建期用补丁源码编一份 `riched20.dll`
+  （`PKGBUILD` 里的 `build_riched20`），启动器放进 prefix 并走 native override
+
+## 已知问题
 
 官方 Windows 包里带一套 OpenGL 能力探测（`win32-test.exe` /
 `win32_voip_test.exe`）和兆芯 GLX 兜底逻辑，本包没有照搬，因为没有证据表明
