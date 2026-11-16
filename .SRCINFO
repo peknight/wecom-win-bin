@@ -1,7 +1,7 @@
 pkgbase = wecom-win-bin
 	pkgdesc = 企业微信 Windows 客户端，基于发行版 wine 11 运行 | Tencent WeCom Windows build on upstream wine
 	pkgver = 5.0.13.6005
-	pkgrel = 17
+	pkgrel = 18
 	url = https://work.weixin.qq.com/
 	arch = x86_64
 	license = LicenseRef-proprietary

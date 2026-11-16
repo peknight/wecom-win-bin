@@ -325,8 +325,10 @@ HKLM\Software\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\W
 启动器 `setsid` 拉起，和主程序同 prefix 但不共享 `LD_PRELOAD`（它不建托盘
 窗口，不需要 `no-shaped-systray.so`）。
 
-每 250ms 轮询两个面板窗口的可见性，看到 visible → hidden 就按面板原来的位置
-把主窗口那一块整块标脏：
+主循环每 250ms 扫一次两个面板窗口的句柄和可见性，同时用
+`SetWinEventHook` 监听 `EVENT_OBJECT_SHOW` / `EVENT_OBJECT_HIDE`。看到
+visible → hidden 后，等面板安静 700ms，再按面板原来的位置把主窗口那一块
+整块标脏，300ms 后补第二枪：
 
 ```c
 RedrawWindow(main_wnd, &panel_rect, NULL,
@@ -343,9 +345,14 @@ RedrawWindow(main_wnd, &panel_rect, NULL,
   只 invalidate 不加 erase，WeCom 收到 `WM_PAINT` 会自己把真实内容画回来。
 - **`RDW_ALLCHILDREN` 也要带**：会话列表是主窗口的子窗口，只标父窗口它不会
   跟着重画。
-- **打四次，隔 250 / 700 / 1150 / 1600ms**：切换后 WeCom 自己还在往上画一阵
-  子，打太早会被它后面的绘制盖掉；第一版从 700ms 开始，实测要 ~0.9s 才收敛，
-  改成从 250ms 开始后 0.4s 就干净了。
+- **不能在面板刚隐藏时立刻重画**：切换后 WeCom 自己还会补画约 0.6 秒。
+  250ms 就重画会先画出 Messages，再被 WeCom 的旧邮件页盖回去，看起来就是
+  「消息 → 旧邮件 → 消息」来回闪。实测把首枪放到面板安静 700ms 后，旧页
+  不再反扑；第二枪在 300ms 后兜底偶发的迟到绘制。
+- **SHOW 必须取消尚未执行的重绘**：第一次用轮询时，Document 的 HIDE/SHOW
+  对实测只隔 3ms，整个落在同一个 250ms tick 里，轮询根本看不见。事件钩子
+  看到任何面板 SHOW 就清空重绘队列，避免把 Messages 盖到刚打开的 Document
+  或 Emails 上。钩子期间收到的 HIDE 则重新开始计算 700ms 安静期。
 - **面板句柄是懒创建、还会被销毁**：冷启动时 Emails / Document 的窗口还不
   存在，点到左边入口才建；切走时它可能被整个销毁。所以"句柄没了"必须当成
   "收起了"，**不能**把它当作新基线重置掉——第一版就是这么漏掉 Document
@@ -353,8 +360,21 @@ RedrawWindow(main_wnd, &panel_rect, NULL,
 - **一个 session 只跑一个**：用命名 mutex 占位。旧实例在主窗口消失后还要守
   5 秒才退出，所以新实例的 mutex 等待时间（32 × 250ms = 8s）必须比它长，
   不然快速重启时两个都退出，没人接手。
+- **WinEvent 回调靠消息循环派发**：轮询等待要用
+  `MsgWaitForMultipleObjectsEx` + `PeekMessage` 泵消息。只 `Sleep` 的话钩子
+  收得到事件也进不了回调，表现和没装钩子一样。
 
-**验证**：录 10fps 的窗口画面，统计切换前后的墨迹量。Emails → Messages 之后
-0.4s 与 3.2s 两张截图逐像素比较差异为 **0**，说明收敛后既没有残留、也没有
-后续的迟到重绘。
+**验证**：录 10fps 的窗口画面，按真实截图时间逐帧分类（页面头部
+`x=76..968, y=20..60` 对三张参考图的平均差分别约 0/1.5/8+，足以稳定区分
+Messages / Emails / Document）。
+
+- Emails → Messages 连测 5 轮：最终都在点击后约 0.8 秒收敛到 Messages，
+  没有永久残留，也没有 watcher 自己制造的来回闪。
+- Document → Messages 连测 3 轮：都在 0.1 秒内直接到 Messages，无残留。
+- 快速互切（Messages → Document → Messages → Emails，间隔 200–300ms）：
+  日志能看到 Document 的 HIDE/SHOW 对只隔 3ms，SHOW 时 watcher 取消了 2–3
+  个待执行重绘，新面板没有再被 Messages 盖回去。
+- WeCom 自己偶尔会在切换瞬间先画一帧旧邮件头，再被 watcher 的 700ms 重绘
+  纠正。这段应用自身的短暂反扑无法靠重绘时序完全消除；能保证的是不再永久
+  残留，也不会因补画时机不当产生多次来回闪。
 

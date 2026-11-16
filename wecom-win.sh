@@ -181,8 +181,9 @@ ensure_prefix() {
 # Emails / Document 是从 Messages 上盖下去的独立子窗口，收起时 wine 的
 # win32u 只擦被露出来的父窗口背景，不会把父窗口标脏重画，于是面板原来盖住
 # 的那一整块（邮件工具栏、会话列表）都会留在屏幕上，直到别的东西触发
-# WM_PAINT。这个守护进程每 250ms 看一眼两个面板的可见性，收起后按面板原
-# 位置把那一块标脏重画几次；跟着主窗口消失自动退出。
+# WM_PAINT。这个守护进程监听面板的 SHOW/HIDE 事件，收起后等 WeCom 自己
+# 停止补画，再按面板原位置把那一块标脏重画；新面板一出现就取消尚未执行
+# 的重绘，避免把 Messages 盖到刚打开的面板上。跟着主窗口消失自动退出。
 start_repaint_watch() {
 	local exe="${SHARE}/wecom-repaint-watch.exe"
 
