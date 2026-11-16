@@ -32,7 +32,7 @@ usage() {
 子命令:
   setup      补装 prefix 或安装包（prefix 已存在时只补缺失部分）
   fontfix    重新应用中文字体替换（界面出现方框时用）
-  dpifix     重新应用 Flutter 的 DPI 对齐（页面变成独立小窗口时用）
+  dpifix     重新应用 DPI 对齐（页面变成独立小窗口 / 面板全白时用）
   prefix     打印当前使用的 WINEPREFIX 路径
   help       显示本帮助
 
@@ -104,14 +104,14 @@ apply_protocols() {
 }
 
 apply_dpi_compat() {
-	# FlutterPlugins.exe 的 manifest 声明 PerMonitorV2，wine 11 据此把它标成
-	# PER_MONITOR_AWARE；企业微信主程序是 SYSTEM_AWARE。wine 11 的
-	# set_parent 会拒绝跨 awareness 挂载（server/window.c 的
-	# is_dpi_awareness_compatible），于是 Industry News、Bot 面板这些 Flutter
-	# 页面嵌不进主窗口，留在桌面上变成无边框独立窗口。
-	# IFEO 在读取 exe manifest 之前生效，把它压成 SYSTEM_AWARE 即可。
+	# FlutterPlugins.exe 和 WeMail.exe 都是 PER_MONITOR_AWARE，而企业微信
+	# 主程序是 SYSTEM_AWARE。wine 11 的 set_parent 会拒绝跨 awareness 挂载
+	# （server/window.c 的 is_dpi_awareness_compatible）：前者让 Industry News、
+	# Bot 面板这些 Flutter 页面掉成桌面上的无边框独立窗口，后者让 Emails /
+	# Document 面板的宿主窗口一直是空的，页面全白。
+	# IFEO 在读取 exe manifest 之前生效，把这两个进程压成 SYSTEM_AWARE 即可。
 	"${WINE_BIN}" regedit /S "${DPI_REG}"
-	message "Flutter DPI 对齐已应用（SYSTEM_AWARE）"
+	message "DPI 对齐已应用（Flutter / WeMail → SYSTEM_AWARE）"
 }
 
 apply_wine_dlls() {

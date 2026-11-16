@@ -251,3 +251,56 @@ export LD_PRELOAD="/usr/lib/wecom-win-bin/no-shaped-systray.so${LD_PRELOAD:+:$LD
 - 图标数据本身是干净的（alpha 直方图里透明像素 alpha=0，没有整块不透明的黑），
   不是企业微信给的图有问题。
 - 关掉面板的"方形图标"也只是换个画法，shape 还在，黑底还在。
+
+## 12. Emails / Document 面板点开全白：WeMail 也没挂进宿主窗口
+
+**现象**：左侧 `Emails`、`Document` 点开后右侧是纯白；聊天、通讯录正常。
+`WeMail.exe` 进程起来了，CEF 日志里 `WebQualityDetector` 报截图
+`white_rate:100`。
+
+**定位过程**：
+
+窗口树（自己的 Win32 探针枚举）里 WeCom 的容器和宿主都在，尺寸也正常，
+但宿主窗口下面没有任何子窗口：
+
+```text
+WeWorkWindow WeCom                          986x650 visible
+  WXworkWindow - WeCom-Email                926x650 visible
+    WXWorkQtHostWindow_NOT_BACKGROUND       926x650 visible   <- 空壳，无子窗口
+```
+
+而 WeMail 那一侧的整棵 UI（含 `CefBrowserWindow`，尺寸 376x545 是对的）
+全挂在自建的隐藏顶层窗口下，停在屏幕外 `(-9120,-9526)`。
+
+用 `GetWindowDpiAwarenessContext` 逐个窗口量，差异就出来了：
+
+| 窗口 | DPI context | awareness |
+|---|---|---|
+| `WXWork.exe` 的宿主窗口 | `0x6011` | 1（SYSTEM_AWARE） |
+| WeMail 的 `Email` / `CefBrowserWindow` | `0x12` | 2（PER_MONITOR_AWARE） |
+
+和第 8 条同一个校验：
+
+```c
+if (parent && !is_desktop_window( parent ) && !is_dpi_awareness_compatible( win, parent ))
+    return set_error( STATUS_INVALID_STATE_TRANSITION );
+```
+
+WeCom 跨进程 `SetParent(WeMail窗口, 宿主)` 直接被 wine 拒了，所以宿主永远
+是空的。从探针进程手动调 `SetParent` 同样返回 0（而且 `GetLastError()` 还是
+0，因为错误发生在窗口所属进程里，跨进程 `WM_WINE_SETPARENT` 只把 0 带回来）。
+
+**修法**：给 `WeMail.exe` 也加一条 IFEO，和 Flutter 那条并排放在
+`wecom-win-dpi.reg`：
+
+```text
+HKLM\Software\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\WeMail.exe
+    dpiAwareness = REG_DWORD 1
+```
+
+**验证**：WeMail 的窗口 context 从 `0x12` 变成 `0x6011`；宿主窗口下面出现
+`Qt51517QWindowIcon "Email"` → `WeMail` → … → `CefBrowserWindow`，面板内容
+正常。Document 走同一个 `WeMail.exe`，一起修好。
+
+**注意**：IFEO 只对新启动的进程生效，改完要把企业微信整个重启一次
+（`wineserver -k` 再启动），只是关掉再点开面板不够 —— `WeMail.exe` 是常驻的。

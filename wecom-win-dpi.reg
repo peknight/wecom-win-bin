@@ -7,3 +7,10 @@ Windows Registry Editor Version 5.00
 ; 压成 SYSTEM_AWARE（1），和主程序对齐。详见 PITFALLS 第 8 条。
 [HKEY_LOCAL_MACHINE\Software\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\FlutterPlugins.exe]
 "dpiAwareness"=dword:00000001
+
+; WeMail.exe（左侧 Emails / Document 面板的进程）的 Qt 窗口也是
+; PER_MONITOR_AWARE，和主程序的 SYSTEM_AWARE 不一致，wine 11 同样拒绝
+; 把它挂进 WXWorkQtHostWindow 宿主窗口。宿主是空的，面板就全白。
+; 一并压成 SYSTEM_AWARE（1）。详见 PITFALLS 第 12 条。
+[HKEY_LOCAL_MACHINE\Software\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\WeMail.exe]
+"dpiAwareness"=dword:00000001

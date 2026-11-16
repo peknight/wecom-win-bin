@@ -56,7 +56,7 @@ prefix 会在几年里长到 3~4G（程序本体约 1.9G，其余是 CEF 缓存�
 | `wecom-win` | 启动；首次运行会先装 |
 | `wecom-win setup` | 只补装缺失的 prefix / 程序 |
 | `wecom-win fontfix` | 重打字体替换表（界面出现方框时用） |
-| `wecom-win dpifix` | 重对齐 Flutter DPI（页面变成独立小窗口时用） |
+| `wecom-win dpifix` | 重对齐 DPI（页面变成独立小窗口 / 面板全白时用） |
 | `wecom-win prefix` | 打印当前使用的 `WINEPREFIX` |
 
 其余参数原样传给 `WXWork.exe`，调试内嵌页面时可以这样开远程调试端口：
