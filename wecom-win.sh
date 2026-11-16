@@ -56,8 +56,13 @@ setup_wine_env() {
 	# 注意：上游 wine 不支持 WINE_WMCLASS（那是 deepin 给 winex11 加的补丁），
 	# WM_CLASS 固定取进程名，也就是 wxwork.exe。桌面入口的 StartupWMClass 得跟着
 	# 写 wxwork.exe；wecom-x11-fix 也是靠这个名字兜底认窗口的。
+	# Wine 的用户区域设置取自进程 locale（LC_ALL 优先于 LANG），它决定
+	# GetUserDefaultUILanguage 的返回值，企业微信据此选界面语言。只设 LANG 时，
+	# 从带 LC_ALL=C.UTF-8 的 shell（比如调试用的会话）启动就会变成英文界面，
+	# 从桌面会话启动又是中文，看起来像语言自己来回变。这里三个一起钉死。
 	export LANG='zh_CN.UTF-8'
 	export LANGUAGE='zh_CN'
+	export LC_ALL='zh_CN.UTF-8'
 	export WINEDEBUG='-all'
 	# 融合会议 wwmapp.exe 会构造 MSVC 并发库的 _TaskCollection，wine 自带的
 	# concrt140.dll 到 11.22 仍是 stub，调用即 EXCEPTION_WINE_STUB 中止，表现为

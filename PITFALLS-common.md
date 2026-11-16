@@ -521,3 +521,27 @@ grep -i riched20 /proc/$pid/maps | head -1
 的白色界面，四角会留下白点。
 守护进程每 250ms 校验一次形状，Wine 重写后会自动补回；退出时恢复原形状。
 主窗口和二级弹窗走同一条路径，都顺手修掉。
+
+## 16. 界面语言在中文和英文之间来回变：LC_ALL 压过了启动器设置的 LANG
+
+**现象**：企业微信界面一会儿中文一会儿英文，只有重启前后才会变，同一次运行
+内不变。
+
+**原因**：界面语言不是企业微信自己的设置，它读 Windows 的用户区域设置
+（`GetUserDefaultUILanguage`）。Wine 的这个值取自进程的 Unix locale，规则是
+`LC_ALL` > `LANG`。启动器只导出了 `LANG=zh_CN.UTF-8`，从桌面会话（没有
+`LC_ALL`）启动就是中文；从带 `LC_ALL=C.UTF-8` 的 shell 启动（调试时会遇到）
+就落到 C locale，企业微信按英文界面启动，还会给 CEF 子进程传 `--lang=en-US`。
+
+验证方式：同一个 prefix 下对比注册表值，`00000804` 是 zh-CN，`00000409` 是
+en-US：
+
+```bash
+env LANG=zh_CN.UTF-8 WINEPREFIX=~/.local/share/wineprefixes/wecom-win \
+    wine reg query 'HKCU\Control Panel\International' /v Locale
+env LANG=zh_CN.UTF-8 LC_ALL=C.UTF-8 WINEPREFIX=~/.local/share/wineprefixes/wecom-win \
+    wine reg query 'HKCU\Control Panel\International' /v Locale
+```
+
+**解法**：`5.0.13.6005-13` 起启动器把 `LANG`、`LANGUAGE`、`LC_ALL` 三个一起
+设成 `zh_CN`，不管从哪个环境启动都是中文界面。想改成英文就三个一起换掉。
