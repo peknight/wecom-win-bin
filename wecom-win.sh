@@ -177,10 +177,10 @@ ensure_prefix() {
 }
 
 # Emails / Document 是从 Messages 上盖下去的独立子窗口，收起时 wine 的
-# win32u 只擦被露出来的父窗口背景，不会把父窗口标脏重画，于是邮件工具栏
-# （Reject / Reply / Search 那一排）会残留在 Messages 顶部，直到别的东西
-# 触发 WM_PAINT。这个守护进程每 250ms 看一眼两个面板的可见性，收起后隔
-# 一阵补画三次主窗口顶部条带；跟着主窗口消失自动退出。
+# win32u 只擦被露出来的父窗口背景，不会把父窗口标脏重画，于是面板原来盖住
+# 的那一整块（邮件工具栏、会话列表）都会留在屏幕上，直到别的东西触发
+# WM_PAINT。这个守护进程每 250ms 看一眼两个面板的可见性，收起后按面板原
+# 位置把那一块标脏重画几次；跟着主窗口消失自动退出。
 start_repaint_watch() {
 	local exe="${SHARE}/wecom-repaint-watch.exe"
 

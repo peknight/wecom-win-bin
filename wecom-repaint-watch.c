@@ -9,9 +9,9 @@
  * something else forces a WM_PAINT.
  *
  * This process polls the two panel windows and, on a visible -> hidden
- * transition, asks the main window to repaint its top strip.  The strip
- * holds the stale toolbar; invalidating it without RDW_ERASE makes WeCom
- * redraw the real Messages header and leaves the chat view untouched.
+ * transition, asks the main window to repaint the area the panel used to
+ * cover.  Invalidating it without RDW_ERASE makes WeCom redraw the real
+ * Messages content instead of clearing to a white rectangle.
  *
  * One process per session, 250 ms poll of a few window handles.
  * WECOM_WIN_NO_REPAINT_WATCH=1 in the launcher skips it.
@@ -24,12 +24,9 @@
 #include <string.h>
 
 #define POLL_MS 250
-#define REPAINT_FIRST_MS 700
-#define REPAINT_STEP_MS 900
-#define REPAINT_SHOTS 3
-/* 残留工具栏相对面板顶边的位置，按 96 dpi 量出来的；高 dpi 下按比例放大 */
-#define STRIP_TOP 20
-#define STRIP_HEIGHT 60
+#define REPAINT_FIRST_MS 250
+#define REPAINT_STEP_MS 450
+#define REPAINT_SHOTS 4
 /* 冷启动到出主窗口要十几秒，给足两分钟 */
 #define STARTUP_GIVE_UP_MS 120000
 /* 主窗口短暂消失（重建）时再等一会儿，超过就认为程序已退出 */
@@ -43,6 +40,7 @@ static BOOL doc_visible;
 static BOOL ever_found;
 static int repaints_left;
 static DWORD next_repaint;
+static HWND hidden_panel;
 
 static void logmsg(const char *fmt, ...)
 {
@@ -105,66 +103,46 @@ static BOOL CALLBACK find_panels(HWND hwnd, LPARAM param)
     return TRUE;
 }
 
-static UINT window_dpi(HWND hwnd)
-{
-    typedef UINT(WINAPI * get_dpi_for_window_t)(HWND);
-    static get_dpi_for_window_t get_dpi;
-    static BOOL looked_up;
-    UINT dpi;
-
-    if (!looked_up) {
-        looked_up = TRUE;
-        get_dpi = (get_dpi_for_window_t)(void *)GetProcAddress(
-            GetModuleHandleA("user32.dll"), "GetDpiForWindow");
-    }
-    dpi = get_dpi ? get_dpi(hwnd) : 0;
-    return dpi ? dpi : 96;
-}
-
-static void repaint_strip(HWND panel)
+/* 面板整个盖住了内容区，收起后那块地方全都是陈的：不只是顶部工具栏，
+ * 左边的会话列表也是。所以按面板原位置整块重画，而不是只打一条窄带。
+ * 面板句柄拿不到时退回整块客户区。 */
+static void repaint_panel_area(HWND panel)
 {
     RECT client;
     RECT panel_rc;
     POINT top_left;
-    LONG offset;
-    LONG height;
+    POINT bottom_right;
+    RECT area;
     BOOL ok;
 
     if (!GetClientRect(main_wnd, &client)) {
         logmsg("GetClientRect failed");
         return;
     }
-    /* 残留就是面板原先盖住的那块地方的最上面一截 */
-    top_left.x = 0;
-    top_left.y = 0;
+    area = client;
     if (panel && GetWindowRect(panel, &panel_rc)) {
         top_left.x = panel_rc.left;
         top_left.y = panel_rc.top;
+        bottom_right.x = panel_rc.right;
+        bottom_right.y = panel_rc.bottom;
         ScreenToClient(main_wnd, &top_left);
-    }
-    offset = MulDiv(STRIP_TOP, window_dpi(main_wnd), 96);
-    height = MulDiv(STRIP_HEIGHT, window_dpi(main_wnd), 96);
-    client.left = 0;
-    client.top = top_left.y + offset;
-    client.bottom = client.top + height;
-    if (client.top < 0) {
-        client.top = 0;
-    }
-    {
-        RECT full;
-
-        GetClientRect(main_wnd, &full);
-        if (client.bottom > full.bottom) {
-            client.bottom = full.bottom;
+        ScreenToClient(main_wnd, &bottom_right);
+        if (bottom_right.x > client.left && top_left.x < client.right &&
+            bottom_right.y > client.top && top_left.y < client.bottom) {
+            area.left = top_left.x > client.left ? top_left.x : client.left;
+            area.top = top_left.y > client.top ? top_left.y : client.top;
+            area.right = bottom_right.x < client.right ? bottom_right.x : client.right;
+            area.bottom = bottom_right.y < client.bottom ? bottom_right.y : client.bottom;
         }
     }
-    if (client.bottom <= client.top) {
+    if (area.right <= area.left || area.bottom <= area.top) {
         return;
     }
-    ok = RedrawWindow(main_wnd, &client, NULL,
-                      RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
-    logmsg("repaint %ld,%ld-%ld,%ld ok=%d", client.left, client.top,
-           client.right, client.bottom, ok);
+    ok = RedrawWindow(main_wnd, &area, NULL,
+                      RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE |
+                          RDW_ALLCHILDREN);
+    logmsg("repaint %ld,%ld-%ld,%ld ok=%d", area.left, area.top,
+           area.right, area.bottom, ok);
 }
 
 int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev, LPSTR cmdline, int show)
@@ -237,20 +215,19 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev, LPSTR cmdline, int show)
         }
 
         /* Emails / Document 面板是第一次点开左侧入口时才建的子窗口，
-         * 冷启动时抓不到，所以要一直重扫到两个句柄都拿到为止。 */
+         * 冷启动时抓不到，所以要一直重扫到两个句柄都拿到为止。
+         * 切走的时候它还可能被整个销毁，所以"句柄没了"必须当成收起，
+         * 不能顺手把基线重置掉——否则这次切换就静默漏过了。 */
         if (!IsWindow(mail_wnd) || !IsWindow(doc_wnd)) {
-            HWND old_mail = IsWindow(mail_wnd) ? mail_wnd : NULL;
-            HWND old_doc = IsWindow(doc_wnd) ? doc_wnd : NULL;
+            HWND old_mail = mail_wnd;
+            HWND old_doc = doc_wnd;
 
             mail_wnd = NULL;
             doc_wnd = NULL;
             EnumChildWindows(main_wnd, find_panels, 0);
-            /* 新拿到的句柄要先记下当前可见性当基线，老句柄的基线不能动 */
-            if (mail_wnd != old_mail) {
-                mail_visible = mail_wnd && IsWindowVisible(mail_wnd);
-            }
-            if (doc_wnd != old_doc) {
-                doc_visible = doc_wnd && IsWindowVisible(doc_wnd);
+            if (mail_wnd != old_mail || doc_wnd != old_doc) {
+                logmsg("panel handles mail=%p->%p doc=%p->%p", old_mail,
+                       mail_wnd, old_doc, doc_wnd);
             }
         }
 
@@ -262,6 +239,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev, LPSTR cmdline, int show)
             /* WeCom keeps painting for a while after the switch, so one
              * early repaint can be overwritten.  Spread a few shots out
              * and let the last one win. */
+            hidden_panel = (mail_visible && !mail_now) ? mail_wnd : doc_wnd;
             repaints_left = REPAINT_SHOTS;
             next_repaint = GetTickCount() + REPAINT_FIRST_MS;
         }
@@ -270,7 +248,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev, LPSTR cmdline, int show)
 
         if (repaints_left && (LONG)(GetTickCount() - next_repaint) >= 0) {
             if (IsWindow(main_wnd) && !IsIconic(main_wnd)) {
-                repaint_strip(!mail_now ? mail_wnd : doc_wnd);
+                repaint_panel_area(hidden_panel);
             }
             repaints_left--;
             next_repaint = GetTickCount() + REPAINT_STEP_MS;
