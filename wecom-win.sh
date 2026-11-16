@@ -49,6 +49,25 @@ resolve_prefix() {
 	printf '%s\n' "${XDG_DATA_HOME:-$HOME/.local/share}/wineprefixes/${APP_ID}"
 }
 
+# 界面语言跟随系统 locale。Wine 的 Windows 用户区域设置（进而
+# GetUserDefaultUILanguage）取自进程 locale，优先级 LC_ALL > LC_CTYPE > LANG；
+# 纯 C / C.UTF-8 会被 Wine 当成 en-US，而工具会话常带这类值，所以遇到就跳过，
+# 继续看下一个变量。三个都没给出明确区域时按英文处理。
+detect_locale() {
+	local candidate
+
+	for candidate in "${LC_ALL:-}" "${LC_CTYPE:-}" "${LANG:-}"; do
+		case "$candidate" in
+		'' | C | C.UTF-8 | POSIX)
+			continue
+			;;
+		esac
+		printf '%s\n' "$candidate"
+		return 0
+	done
+	printf '%s\n' 'en_US.UTF-8'
+}
+
 setup_wine_env() {
 	export WINEPREFIX="$1"
 	# 发行版 wine 自带全套 PE 库，别让环境里残留的 WINEDLLPATH 指到别处
@@ -56,13 +75,13 @@ setup_wine_env() {
 	# 注意：上游 wine 不支持 WINE_WMCLASS（那是 deepin 给 winex11 加的补丁），
 	# WM_CLASS 固定取进程名，也就是 wxwork.exe。桌面入口的 StartupWMClass 得跟着
 	# 写 wxwork.exe；wecom-x11-fix 也是靠这个名字兜底认窗口的。
-	# Wine 的用户区域设置取自进程 locale（LC_ALL 优先于 LANG），它决定
-	# GetUserDefaultUILanguage 的返回值，企业微信据此选界面语言。只设 LANG 时，
-	# 从带 LC_ALL=C.UTF-8 的 shell（比如调试用的会话）启动就会变成英文界面，
-	# 从桌面会话启动又是中文，看起来像语言自己来回变。这里三个一起钉死。
-	export LANG='zh_CN.UTF-8'
-	export LANGUAGE='zh_CN'
-	export LC_ALL='zh_CN.UTF-8'
+	# 界面语言跟随系统，三个变量写成同一个值，避免 LC_ALL 压过 LANG 造成
+	# 从不同环境启动时语言来回变；具体取值见 detect_locale。
+	local app_locale
+	app_locale=$(detect_locale)
+	export LANG="$app_locale"
+	export LANGUAGE="${app_locale%%.*}"
+	export LC_ALL="$app_locale"
 	export WINEDEBUG='-all'
 	# 融合会议 wwmapp.exe 会构造 MSVC 并发库的 _TaskCollection，wine 自带的
 	# concrt140.dll 到 11.22 仍是 stub，调用即 EXCEPTION_WINE_STUB 中止，表现为

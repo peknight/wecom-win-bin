@@ -543,5 +543,8 @@ env LANG=zh_CN.UTF-8 LC_ALL=C.UTF-8 WINEPREFIX=~/.local/share/wineprefixes/wecom
     wine reg query 'HKCU\Control Panel\International' /v Locale
 ```
 
-**解法**：`5.0.13.6005-13` 起启动器把 `LANG`、`LANGUAGE`、`LC_ALL` 三个一起
-设成 `zh_CN`，不管从哪个环境启动都是中文界面。想改成英文就三个一起换掉。
+**解法**：`5.0.13.6005-14` 起启动器跟随系统 locale：按
+`LC_ALL > LC_CTYPE > LANG` 取第一个不是 `C` / `C.UTF-8` / `POSIX` 的值，
+三个变量统一成它，再交给 Wine。这样系统是英文就英文界面、系统是中文就中文
+界面，带 `LC_ALL=C.UTF-8` 的调试会话也不会把中文系统带成英文；三个都没设时
+按 `en_US.UTF-8` 处理。
