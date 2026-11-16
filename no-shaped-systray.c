@@ -14,7 +14,7 @@
  * 像素的 32 位托盘窗口时，丢掉 ShapeBounding 的设置。ShapeInput 一律不动，
  * 透明处的点击穿透行为保持原样。
  *
- * 用法：LD_PRELOAD=/usr/lib/wecom-win11-bin/no-shaped-systray.so wine ...
+ * 用法：LD_PRELOAD=/usr/lib/wecom-win-bin/no-shaped-systray.so wine ...
  * 启动器里已经设好，不需要手工带。
  */
 #define _GNU_SOURCE
