@@ -122,9 +122,11 @@ apply_fonts() {
 apply_protocols() {
 	# 企业微信里的 WorkBuddy 入口用 ShellExecute 打开 workbuddy://，
 	# wine 只内置 http/https/mailto 等少数协议，不注册就只会提示“没有下载”。
-	# 指向 winebrowser 后由它转发给宿主 xdg-open，落到系统的 WorkBuddy。
+	# 5.0.13 起企业微信还会读这个 exe 的 FileVersion 判断版本，winebrowser
+	# 没有版本资源会被判成“版本过低”，所以指向 workbuddy-win-bin 提供的
+	# 带版本转发器，再由它交给 winebrowser 转到宿主 xdg-open。
 	"${WINE_BIN}" regedit /S "${PROTOCOLS_REG}"
-	message "workbuddy:// 协议已注册（转发到宿主 xdg-open）"
+	message "workbuddy:// 协议已注册（版本化转发器 -> 宿主 xdg-open）"
 }
 
 apply_dpi_compat() {

@@ -1,7 +1,7 @@
 pkgbase = wecom-win-bin
 	pkgdesc = 企业微信 Windows 客户端，基于发行版 wine 11 运行 | Tencent WeCom Windows build on upstream wine
 	pkgver = 5.0.13.6005
-	pkgrel = 16
+	pkgrel = 17
 	url = https://work.weixin.qq.com/
 	arch = x86_64
 	license = LicenseRef-proprietary
@@ -17,6 +17,7 @@ pkgbase = wecom-win-bin
 	depends = libxext
 	depends = wqy-microhei
 	optdepends = wecom-x11-fix: 修复窗口按钮穿透与拖动时的白边残留
+	optdepends = workbuddy-win-bin: 企业微信里的 WorkBuddy 入口跳转到本机 WorkBuddy
 	conflicts = wecom-win11-bin
 	replaces = wecom-win11-bin
 	noextract = WeCom_5.0.13.6005.exe

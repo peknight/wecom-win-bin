@@ -2,7 +2,7 @@
 
 pkgname=wecom-win-bin
 pkgver=5.0.13.6005
-pkgrel=16
+pkgrel=17
 pkgdesc='企业微信 Windows 客户端，基于发行版 wine 11 运行 | Tencent WeCom Windows build on upstream wine'
 arch=('x86_64')
 url='https://work.weixin.qq.com/'
@@ -25,6 +25,7 @@ depends=(
 )
 optdepends=(
     'wecom-x11-fix: 修复窗口按钮穿透与拖动时的白边残留'
+    'workbuddy-win-bin: 企业微信里的 WorkBuddy 入口跳转到本机 WorkBuddy'
 )
 makedepends=(
     'icoutils'

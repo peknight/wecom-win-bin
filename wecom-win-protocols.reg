@@ -5,7 +5,7 @@ Windows Registry Editor Version 5.00
 "URL Protocol"=""
 
 [HKEY_LOCAL_MACHINE\Software\Classes\workbuddy\DefaultIcon]
-@="C:\\windows\\system32\\winebrowser.exe,0"
+@="Z:\\usr\\lib\\workbuddy-win-bin\\workbuddy-protocol.exe,0"
 
 [HKEY_LOCAL_MACHINE\Software\Classes\workbuddy\shell\open\command]
-@="\"C:\\windows\\system32\\winebrowser.exe\" \"%1\""
+@="\"Z:\\usr\\lib\\workbuddy-win-bin\\workbuddy-protocol.exe\" \"%1\""

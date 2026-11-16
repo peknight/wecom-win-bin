@@ -110,6 +110,32 @@ winebrowser 会顺带打印一行
 `xdg-settings: default-url-scheme-handler not implemented for xfce`，
 那是它在 xfce 下查默认处理器的噪音，后面的 `xdg-open` 仍然成功，可以忽略。
 
+### 11.1 5.0.13 起又提示“WorkBuddy 版本过低”
+
+**现象**：WorkBuddy 已经是最新版，点机器人会话里的跳转登录仍弹“版本过低”。
+
+**原因**：企业微信 5.0.13 的 `WorkBuddyLauncher` 多了一步版本检查：先读
+`HKCR\workbuddy\shell\open\command` 拿到 exe 路径，再用
+`GetFileVersionInfoW` 读它的 `FileVersion`，和系统配置
+`workbuddy_aibot_min_version_pc` 比较。上面注册的是 `winebrowser.exe`，
+这个纯 Wine 程序**没有任何 VERSIONINFO 资源**，于是企业微信看到“路径存在、
+版本读不出来”，走的是“版本过低”分支而不是“未安装”分支。
+
+**解法**：`workbuddy-win-bin` 包提供一个 `workbuddy-protocol.exe` 薄壳，
+版本号与真实的 `WorkBuddy.exe` 保持一致（构建期从 pkgver 生成），收到 URL 后
+再调用 `winebrowser.exe`。注册表指向
+`Z:\usr\lib\workbuddy-win-bin\workbuddy-protocol.exe`，两边的版本随包升级
+自动同步。WorkBuddy 没装时该路径不存在，企业微信会正确显示“未安装”。
+
+顺带两个宿主侧要求：`workbuddy-win.desktop` 必须声明
+`MimeType=x-scheme-handler/workbuddy;`，`Exec` 用 `/usr/bin/workbuddy-win`
+绝对路径（裸命令名会被 `~/.local/bin` 里的同名脚本截胡）。确认处理器：
+
+```bash
+xdg-mime query default x-scheme-handler/workbuddy
+# workbuddy-win-bin.desktop
+```
+
 ## 12. CEF 弹窗（Industry News / Request for use / Approvals）白屏
 
 **现象**：主界面和聊天正常，点开这几个独立弹窗后内容区纯白；有时是“闪白”，
