@@ -136,6 +136,32 @@ xdg-mime query default x-scheme-handler/workbuddy
 # workbuddy-win-bin.desktop
 ```
 
+### 11.2 版本对了，还是弹 `Failed to open WorkBuddy`
+
+**现象**：不再提示“版本过低”，改成 `Failed to open WorkBuddy. Please try
+again later.`；`workbuddy-protocol.exe` 的日志里没有新行，说明转发器压根没被
+调用，失败发生在 `ShellExecute` 之前。
+
+**原因**：5.0.13 的 `WorkBuddyLauncher` 在版本检查之后还有一道签名检查，走的
+不是信任链，而是**发布者名字白名单**：
+
+1. `CryptQueryObject` 打开协议 exe 的 Authenticode 签名，取出签名者证书；
+2. `CertGetNameStringW(..., CERT_NAME_SIMPLE_DISPLAY_TYPE, ...)` 取 **CN**；
+3. 与 `WXWork.exe` 内置的 `Tencent Technology (Shenzhen) Company Limited` /
+   `Tencent Technology(Shenzhen) Company Limited` 比对；
+4. 不符就走 `invalid signature` 分支，只显示那句笼统的打开失败。
+
+Wine 的 `wintrust` 只核对签名结构和摘要，不做信任链校验，自签名也会返回成功，
+所以只把 exe 签上名还不够，证书主题必须和腾讯证书同名（包括
+`jurisdictionC/ST/L`、`businessCategory`、`serialNumber` 这些字段）。
+
+**解法**：`workbuddy-win-bin` 构建期生成一次性自签 CA + leaf，leaf 主题照抄
+`WXWork.exe` 内嵌证书，再用 `jsign` 做 Authenticode 签名。实测 `+crypt`
+日志从 `rdn_value_to_strW returning 19 (L"workbuddy-protocol")` 变成
+`returning 46 (L"Tencent Technology (Shenzhen) Company Limited")`，转发器随即
+收到真实 `workbuddy://mission?...`。这是本地兼容手段，真实 Windows 上自签证书
+不会被信任。
+
 ## 12. CEF 弹窗（Industry News / Request for use / Approvals）白屏
 
 **现象**：主界面和聊天正常，点开这几个独立弹窗后内容区纯白；有时是“闪白”，
