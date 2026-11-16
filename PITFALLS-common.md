@@ -574,3 +574,37 @@ env LANG=zh_CN.UTF-8 LC_ALL=C.UTF-8 WINEPREFIX=~/.local/share/wineprefixes/wecom
 三个变量统一成它，再交给 Wine。这样系统是英文就英文界面、系统是中文就中文
 界面，带 `LC_ALL=C.UTF-8` 的调试会话也不会把中文系统带成英文；三个都没设时
 按 `en_US.UTF-8` 处理。
+
+## 17. 邮件阅读窗口的阴影白边会透过遮挡它的窗口显示
+
+**现象**：在 Emails 里双击邮件打开的独立阅读窗口，四周有一圈浅灰色边
+（实测 `#e5e7e9` 左右，宽约 14px），不像原生窗口边框；把这封邮件窗口留在
+下层、用别的窗口（浏览器、终端）盖住它，这圈灰边仍然浮在最顶层，能直接看到，
+只是点了没反应。
+
+**原因**：邮件窗口不属于主进程。它跑在独立的 `WeMail.exe` 里，
+`WM_CLASS` 是 `wemail.exe`，而 `wecom-x11-fix` 原来只认 `wxwork.exe`，所以
+整个窗口连同它的阴影都没被接管。它的阴影还比主窗口特殊：
+
+- 是一个 `override_redirect=1` 的 32 位 ARGB 窗口，每边比窗口大 14px；
+- **没有** `WM_TRANSIENT_FOR`，因此不会出现在 `_NET_CLIENT_LIST` 里，
+  原来按 client list 找阴影的 `find_ring()` 直接扫不到；
+- 旧代码因为要防误伤，显式拒绝 override-redirect 的候选窗口。
+
+而 override-redirect 窗口永远压在普通窗口上面，所以它内圈那条不透明浅灰带
+会透过任何盖住邮件窗口的窗口显示出来 —— 这和第 15 条的白边是同一个成因，
+只是这个阴影窗口在层级上根本管不到。
+
+**解法**：`wecom-x11-fix` 1.0.0-10 起：
+
+- `wecom_names` 增加 `wemail.exe`，邮件窗口作为独立 target 接管；
+- 允许 `override_redirect` 的 32 位 ARGB 阴影当 ring，有
+  `WM_TRANSIENT_FOR` 时仍然校验 owner，没有 hint 的只在几何完全对上时接受；
+- `find_ring()` 除 `_NET_CLIENT_LIST` 外再扫一遍 root 窗口树，把这种不进
+  client list 的阴影也找出来；
+- `ring_apply_shape()` 除了减去 owner 自身形状，还减去**盖在 owner 上方的
+  窗口区域**，阴影被遮挡的部分直接裁掉，不再浮到遮挡窗口上面。
+
+验证方式：`xdotool windowraise <遮挡窗口>` 后再截图取阴影带那一列的像素，
+修复前是浅灰带，修复后是遮挡窗口自己的像素；把邮件窗口提回顶层，灰边不再
+出现，阴影外圈仍然保留。
