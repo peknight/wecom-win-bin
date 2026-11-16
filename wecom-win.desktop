@@ -1,13 +1,14 @@
 [Desktop Entry]
 Type=Application
-Name=WeCom (Windows)
-Name[zh_CN]=企业微信 (Windows)
-Comment=Tencent WeCom Windows build running on deepin-wine
-Comment[zh_CN]=通过 deepin-wine 运行的企业微信 Windows 客户端
-Exec=wecom-win %u
-Icon=wecom-win-bin
+Name=WeCom (Windows, Wine 11)
+Name[zh_CN]=@APP_NAME@
+Comment=Tencent WeCom Windows build running on upstream wine 11
+Comment[zh_CN]=通过发行版自带的 wine 11 运行的企业微信 Windows 客户端
+Exec=@BIN@ %u
+Icon=@PKGNAME@
 Terminal=false
 Categories=Network;InstantMessaging;Chat;
-# 窗口真实的 WM_CLASS（由启动器的 WINE_WMCLASS 决定），桌面环境靠它归组
-StartupWMClass=wecom-win
+# 窗口真实的 WM_CLASS，桌面环境靠它归组。上游 wine 固定取进程名，改不了
+# （WINE_WMCLASS 是 deepin 给 winex11 加的补丁，发行版 wine 不认）
+StartupWMClass=wxwork.exe
 StartupNotify=true

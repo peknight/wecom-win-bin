@@ -1,8 +1,19 @@
 Windows Registry Editor Version 5.00
 
-; GDI 侧的中文回退：主界面走 GDI，靠这些替换拿到文泉驿。
-; CEF 走 DirectWrite，不吃这张表，那部分靠 Fonts 目录里的 Tahoma（见 PITFALLS.md）。
+; wine 11 的 GDI 和 DirectWrite 都读这张替换表
+; （gdi32 的 load_font_replacements、dwrite/font.c 的 fontcollection_add_replacements）。
+;
+; GDI 侧：主界面、RichEdit 输入框按字体名取字，全部落到文泉驿。
+; DirectWrite 侧：CEF 不吃上面的家族名，但它有自己的 CJK 回退链
+; （dwrite/analyzer.c 的 system_fallback_config 指向 Noto Sans CJK），
+; 只要把 Noto 这几个家族名别名到本机字体就有中文字形，
+; 不需要再往 prefix 里塞派生 Tahoma。
 [HKEY_CURRENT_USER\Software\Wine\Fonts\Replacements]
+"Tahoma"="WenQuanYi Micro Hei"
+"Noto Sans CJK SC"="WenQuanYi Micro Hei"
+"Noto Sans CJK TC"="WenQuanYi Micro Hei"
+"Noto Sans CJK JP"="WenQuanYi Micro Hei"
+"Noto Sans CJK KR"="WenQuanYi Micro Hei"
 "Arial"="WenQuanYi Micro Hei"
 "Arial Black"="WenQuanYi Micro Hei"
 "Calibri"="WenQuanYi Micro Hei"
@@ -30,10 +41,11 @@ Windows Registry Editor Version 5.00
 "TencentSans W7"="WenQuanYi Micro Hei"
 "Verdana"="WenQuanYi Micro Hei"
 
+; 清掉 5.0.13.6005-3 及更早版本装进 prefix 的派生 Tahoma
 [HKEY_LOCAL_MACHINE\Software\Microsoft\Windows NT\CurrentVersion\Fonts]
-"Tahoma (TrueType)"="C:\\windows\\Fonts\\tahoma.ttf"
-"Tahoma Bold (TrueType)"="C:\\windows\\Fonts\\tahomabd.ttf"
+"Tahoma (TrueType)"=-
+"Tahoma Bold (TrueType)"=-
 
 [HKEY_LOCAL_MACHINE\Software\Wow6432Node\Microsoft\Windows NT\CurrentVersion\Fonts]
-"Tahoma (TrueType)"="C:\\windows\\Fonts\\tahoma.ttf"
-"Tahoma Bold (TrueType)"="C:\\windows\\Fonts\\tahomabd.ttf"
+"Tahoma (TrueType)"=-
+"Tahoma Bold (TrueType)"=-

@@ -1,0 +1,9 @@
+Windows Registry Editor Version 5.00
+
+; FlutterPlugins.exe 自带 PerMonitorV2 manifest，wine 11 会据此给它
+; PER_MONITOR_AWARE 的 DPI context；企业微信主程序是 SYSTEM_AWARE。
+; wine 11 的 set_parent 会拒绝跨 awareness 挂载子窗口，导致 Industry News
+; 之类的 Flutter 页面变成独立顶层窗口。用 IFEO 在读取 manifest 前把它
+; 压成 SYSTEM_AWARE（1），和主程序对齐。详见 PITFALLS 第 8 条。
+[HKEY_LOCAL_MACHINE\Software\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\FlutterPlugins.exe]
+"dpiAwareness"=dword:00000001
