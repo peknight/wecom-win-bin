@@ -176,6 +176,27 @@ ensure_prefix() {
 	apply_wine_dlls
 }
 
+# Emails / Document 是从 Messages 上盖下去的独立子窗口，收起时 wine 的
+# win32u 只擦被露出来的父窗口背景，不会把父窗口标脏重画，于是邮件工具栏
+# （Reject / Reply / Search 那一排）会残留在 Messages 顶部，直到别的东西
+# 触发 WM_PAINT。这个守护进程每 250ms 看一眼两个面板的可见性，收起后隔
+# 一阵补画三次主窗口顶部条带；跟着主窗口消失自动退出。
+start_repaint_watch() {
+	local exe="${SHARE}/wecom-repaint-watch.exe"
+
+	[[ -f ${exe} ]] || return 0
+	[[ ${WECOM_WIN_NO_REPAINT_WATCH:-0} == 1 ]] && return 0
+
+	# 不带 no-shaped-systray 进这个进程，它不建托盘窗口
+	if command -v setsid >/dev/null 2>&1; then
+		setsid env -u LD_PRELOAD "${WINE_BIN}" "${exe}" \
+			</dev/null >/dev/null 2>&1 &
+	else
+		env -u LD_PRELOAD "${WINE_BIN}" "${exe}" \
+			</dev/null >/dev/null 2>&1 &
+	fi
+}
+
 launch() {
 	# Wine 把 PE 的可写数据节映射成 PAGE_WRITECOPY，而 V8 启动时的
 	# FreezeFlags() 会 VirtualProtect 成只读并断言旧保护属性是 PAGE_READWRITE，
@@ -190,6 +211,8 @@ launch() {
 			break
 		fi
 	done
+
+	start_repaint_watch
 
 	cd "${WINEPREFIX}/drive_c/${WIN_APP_DIR}"
 	exec "${WINE_BIN}" WXWork.exe "${cef_args[@]}" "$@"

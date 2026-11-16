@@ -2,7 +2,7 @@
 
 pkgname=wecom-win-bin
 pkgver=5.0.13.6005
-pkgrel=14
+pkgrel=15
 pkgdesc='企业微信 Windows 客户端，基于发行版 wine 11 运行 | Tencent WeCom Windows build on upstream wine'
 arch=('x86_64')
 url='https://work.weixin.qq.com/'
@@ -53,11 +53,13 @@ source=(
     'wecom-win-protocols.reg'
     'wecom-win-dpi.reg'
     'no-shaped-systray.c'
+    'wecom-repaint-watch.c'
 )
 noextract=("WeCom_${pkgver}.exe")
 sha256sums=(
     '5df50a240038a2de7c3b17e4f25f4747e74d97f9028be9baec6f7379fc97e1be'
     'f172e9c1be73e862057deae1f0e03ce95919986c5df8a18e1c0829c34863c9ee'
+    'SKIP'
     'SKIP'
     'SKIP'
     'SKIP'
@@ -122,6 +124,11 @@ build() {
     cc -shared -fPIC -O2 -Wall -Wextra \
         -o no-shaped-systray.so no-shaped-systray.c -ldl -lX11 -lXext
 
+    # Emails / Document 面板收起后残留的邮件工具栏：编一个 Windows 小程序，
+    # 由启动器拉起，盯面板可见性并补一次主窗口重绘。见 wecom-repaint-watch.c
+    x86_64-w64-mingw32-gcc -O2 -s -mwindows -Wall -Wextra \
+        -o wecom-repaint-watch.exe wecom-repaint-watch.c
+
     # 图标只是锦上添花，抠不出来不该让整个构建失败
     mkdir -p icons
     # exe 里只有一个 1033/103 图标组，显式指定，免得 wrestool 挑错资源
@@ -164,6 +171,7 @@ package() {
     install -Dm644 "$srcdir/fonts/tahomabd.ttf" "$share/fonts/tahomabd.ttf"
     install -Dm755 "$srcdir/no-shaped-systray.so" \
         "$pkgdir/usr/lib/$pkgname/no-shaped-systray.so"
+    install -Dm644 "$srcdir/wecom-repaint-watch.exe" "$share/wecom-repaint-watch.exe"
     install -Dm644 "$srcdir/wecom-win-fonts.reg" "$share/wecom-win-fonts.reg"
     install -Dm644 "$srcdir/wecom-win-protocols.reg" "$share/wecom-win-protocols.reg"
     install -Dm644 "$srcdir/wecom-win-dpi.reg" "$share/wecom-win-dpi.reg"

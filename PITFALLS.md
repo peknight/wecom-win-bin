@@ -304,3 +304,55 @@ HKLM\Software\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\W
 
 **注意**：IFEO 只对新启动的进程生效，改完要把企业微信整个重启一次
 （`wineserver -k` 再启动），只是关掉再点开面板不够 —— `WeMail.exe` 是常驻的。
+
+## 13. Emails / Document 切回 Messages 后，顶部残留邮件工具栏
+
+**现象**：Messages → Emails（或 Document）→ Messages 之后，会话标题那一行
+还留着邮件那一排按钮和文字（`Reject`、`Reply`、`Search`）。不点别的东
+西就一直挂着，鼠标划过或切个窗口又会自己消失。
+
+**原因**：Emails / Document 不是主窗口里的一块区域，而是盖在 Messages 上面
+的独立 Win32 子窗口。Wine 的 win32u 在隐藏子窗口时走的是
+`erase_now()`：给露出来的父窗口发 `WM_ERASEBKGND` 擦背景，就到此为止了，
+**不会**顺手把父窗口客户区标成 invalid。原生 Windows 那边 `ShowWindow`
+之后的失效处理是完整的，所以这事只在 wine 上出现。
+
+父窗口既然没被标脏，`WM_PAINT` 就不会来，WeCom 自己也就没机会把 Messages
+的头部重画上去，那排按钮的像素就一直留在屏上，直到别的事件（鼠标悬停重绘、
+切换窗口、resize）碰巧触发一次重绘。
+
+**修法**：`wecom-repaint-watch.c`，一个跑在 wine 里的 Windows 小程序，由
+启动器 `setsid` 拉起，和主程序同 prefix 但不共享 `LD_PRELOAD`（它不建托盘
+窗口，不需要 `no-shaped-systray.so`）。
+
+每 250ms 轮询两个面板窗口的可见性，看到 visible → hidden 就对主窗口的顶部
+条带调：
+
+```c
+RedrawWindow(main_wnd, &strip, NULL,
+             RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
+```
+
+几个关键点：
+
+- **`RDW_NOERASE` 不能省**：带擦背景的话主窗口会闪一下白，聊天区也会跟着抖。
+  只 invalidate 不加 erase，WeCom 收到 `WM_PAINT` 会自己把真实内容画回来。
+- **打三次，隔 700 / 1600 / 2500ms**：切换后 WeCom 自己还在往上画一阵子，
+  打太早会被它后面的绘制盖掉。实测只打一次的时候有概率被覆盖，三次里最后
+  一次一定落在它安静之后。
+- **条带按面板句柄定位**，不是写死坐标：取面板客户区左上角，往上 20px 起、
+  高 60px（96dpi 基准），按窗口 DPI 等比放大。
+- **面板句柄是懒创建的**：冷启动时 Emails / Document 的窗口还不存在，必须
+  点到左边入口才建。所以不能启动时扫一次就完事，拿不到就一直重扫。
+- **第一次拿到句柄时要把当前可见性记成基线**，否则刚点开面板的那一下会被
+  当成 visible → hidden，白打三次重绘。
+- **一个 session 只跑一个**：用命名 mutex 占位。旧实例在主窗口消失后还要守
+  5 秒才退出，所以新实例的 mutex 等待时间（32 × 250ms = 8s）必须比它长，
+  不然快速重启时两个都退出，没人接手。
+
+**验证**：以强制 resize 触发全量重绘后的 Messages 截图作干净基准，比较顶部
+`x 560..986 / y 20..70` 条带。修复前切换后差异 4.6%，700ms 后开始收敛，
+3.6s 后 0.0%；Emails → Messages、Document → Messages 各测一轮，再加三轮
+0.7s 间隔的快速来回切，最终 0.04%（残差是光标）。
+
+`WECOM_WIN_NO_REPAINT_WATCH=1` 可以让启动器跳过这个守护进程。
