@@ -139,33 +139,37 @@ WINEPREFIX=$HOME/.local/share/wineprefixes/wecom-win wine reg delete \
   /v dpiAwareness /f
 ```
 
-## 9. 中文字体：wine 11 自己会回退，只需要一张替换表
+## 9. 中文字体：DirectWrite 有回退，GDI 的 Tahoma 必须自己补汉字
 
-deepin-wine10 那条线路要在构建期用 `make-tahoma.py` 派生一份带汉字的 Tahoma
-塞进 prefix，否则输入框里的汉字是方框。wine 11 不需要这么干，两条渲染路径
-都有自己的回退：
+两条渲染路径要分开看：
 
 | 路径 | 用在哪 | wine 11 的行为 |
 |---|---|---|
 | DirectWrite | CEF 页面（聊天区、News、弹窗） | `dlls/dwrite/analyzer.c` 的 `system_fallback_config` 内置 CJK 回退，指向 `Noto Sans CJK SC/TC/KR/JP`；`dlls/dwrite/font.c` 的 `fontcollection_add_replacements()` 认 `HKCU\Software\Wine\Fonts\Replacements`，把 Noto 这些家族名别名到本机字体 |
-| GDI | 主界面、RichEdit 输入框 | 目标家族本身没有汉字时，绘制阶段逐字回退到系统字体；`GetTextExtentPoint32W` 的宽度也是回退后的宽度，光标不会错位 |
+| GDI | 主界面、RichEdit 输入框 | 走 `Replacements` 的家族没问题（微软雅黑、Noto 等都会落到文泉驿）；但 `Tahoma` 家族已经存在（wine 自带一份只有拉丁字的 `tahoma.ttf`），替换不生效，RichEdit 输入框因此画方框 |
 
-所以 `wecom-win-fonts.reg` 里只留替换表：把 `Tahoma`、`Noto Sans CJK *` 和
-企业微信会点名的那堆 Windows 字体名都指向 `WenQuanYi Micro Hei`。
+所以包里同时做两件事：`wecom-win-fonts.reg` 写替换表把
+`Noto Sans CJK *` 和企业微信会点名的那堆 Windows 字体名指向
+`WenQuanYi Micro Hei`；构建期再用 `make-tahoma.py` 从文泉驿派生一份家族名为
+`Tahoma` 的字体，由 `apply_fonts()` 放进 `drive_c/windows/Fonts` 并在
+`HKLM\...\Fonts` 注册。
+
+> 2026-11-16 的教训：`5.0.13.6005-4` 曾把派生 Tahoma 当成"wine 11 已经不需要"
+> 删掉，结果主界面正常、输入框输中文又变方框。`5.0.13.6005-11` 起恢复。
+> 主界面走 `TextOutW` 时确实有逐字回退，但 RichEdit 输入框依赖字形索引，
+> 不能拿主界面的效果推断输入框。
 
 **坑一：GDI 的替换不会覆盖已存在的家族。** `dlls/win32u/font.c` 的
 `load_gdi_font_replacements()` 里有 `else TRACE("%s is available. Skip this
 replacement.")`；而 wine 11 自带一份只有拉丁字的 `tahoma.ttf`
 （`/usr/share/wine/fonts/tahoma.ttf`），所以 `"Tahoma"="WenQuanYi Micro Hei"`
-这条对 GDI 是**不生效**的，DirectWrite 侧才生效。实测
-`GetGlyphIndicesW` 对 4 个汉字仍返回 `0xFFFF`，但 `TextOutW` 画出来的就是
-文泉驿的字形（和直接用文泉驿的位图逐像素一致，只有基线差 2px）。
-**别拿 `GetGlyphIndicesW` 判断字体能不能显示汉字。**
+这条对 GDI 是**不生效**的，DirectWrite 侧才生效。没有派生 Tahoma 时实测
+`GetGlyphIndicesW` 对 4 个汉字返回 `0xFFFF`，输入框就是方框。
 
 **坑二：`FontSubstitutes` 也救不了。** `find_matching_face_by_name()` 先按名字
 找家族，找到就直接用，只有找不到才看替换名；Tahoma 家族存在，替换名根本没机会。
 
-**验证方法**（`/tmp/dwritefb.exe`、`/tmp/gdirender.exe` 是当时写的一次性探针）：
+**验证方法**（`/tmp/dwritefb.exe`、`/tmp/gdifonttest.exe` 是当时写的一次性探针）：
 
 ```bash
 export WINEPREFIX=$HOME/.local/share/wineprefixes/wecom-win
@@ -173,15 +177,13 @@ export WINEPREFIX=$HOME/.local/share/wineprefixes/wecom-win
 # DirectWrite：返回的字体必须有汉字字形索引
 wine /tmp/dwritefb.exe        # U+4E2D glyph index 非 0
 
-# GDI：Tahoma 和文泉驿画出来的位图应当一致（只有基线差）
-wine /tmp/gdirender.exe       # dark=440，两张 ASCII 图字形相同
+# GDI：Tahoma 不能是 ffff；派生字体铺好后应当返回真实字形索引
+wine /tmp/gdifonttest.exe
 ```
 
-`5.0.13.6005-4` 起包里不再带 `tahoma.ttf`/`tahomabd.ttf`，`apply_fonts()` 每次
-启动会把 prefix 里旧版留下的这两个文件删掉再导入替换表（幂等），所以老 prefix
-升级后也自动瘦身。回滚就是把旧包（`-3`）装回去，`fontfix` 会重新铺字体。
-
-副作用：`wqy-microhei` 从 `makedepends` 变成 `depends`，运行时必须装着它。
+`apply_fonts()` 每次启动都会把包里 `fonts/` 下的两个派生字体重新铺进 prefix
+再导入注册表，幂等，老 prefix 升级后也不需要手工处理。`fontfix` 子命令可以
+单独重跑这一步。
 
 ## 10. Plank 会把没装包时缓存的 fallback 图标一直记着
 

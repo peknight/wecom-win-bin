@@ -84,13 +84,15 @@ app_installed() {
 }
 
 apply_fonts() {
-	# 中文字形靠 wine 11 的字体替换表解决：GDI 按家族名换，DirectWrite 走
-	# 自己的 Noto Sans CJK 回退链、再别名到本机字体（见 wecom-win-fonts.reg）。
-	# 5.0.13.6005-4 起不再往 prefix 里塞派生 Tahoma，这里顺手清掉旧版的残留。
+	# DirectWrite（CEF 页面）走 wine 11 自己的 Noto Sans CJK 回退链，再经替换表
+	# 落到文泉驿；GDI（主界面、RichEdit 输入框）按家族名取字，而 wine 自带的
+	# tahoma.ttf 没有汉字、GDI 的 Replacements 又不覆盖已存在的家族，所以
+	# 必须往 prefix 里放一份带汉字的派生 Tahoma。
 	local win_fonts="${WINEPREFIX}/drive_c/windows/Fonts"
-	rm -f "${win_fonts}/tahoma.ttf" "${win_fonts}/tahomabd.ttf"
+	install -Dm644 "${SHARE}/fonts/tahoma.ttf" "${win_fonts}/tahoma.ttf"
+	install -Dm644 "${SHARE}/fonts/tahomabd.ttf" "${win_fonts}/tahomabd.ttf"
 	"${WINE_BIN}" regedit /S "${FONTS_REG}"
-	message "字体替换已应用（中文 -> 文泉驿微米黑）"
+	message "中文字体已应用（派生 Tahoma + 替换表 -> 文泉驿微米黑）"
 }
 
 apply_protocols() {

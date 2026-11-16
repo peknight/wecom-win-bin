@@ -41,11 +41,12 @@ Windows Registry Editor Version 5.00
 "TencentSans W7"="WenQuanYi Micro Hei"
 "Verdana"="WenQuanYi Micro Hei"
 
-; 清掉 5.0.13.6005-3 及更早版本装进 prefix 的派生 Tahoma
+; GDI 侧（主界面、RichEdit 输入框）还需要一份带汉字的派生 Tahoma：
+; wine 自带的 tahoma.ttf 没有汉字，而 GDI 的 Replacements 不覆盖已存在的家族。
 [HKEY_LOCAL_MACHINE\Software\Microsoft\Windows NT\CurrentVersion\Fonts]
-"Tahoma (TrueType)"=-
-"Tahoma Bold (TrueType)"=-
+"Tahoma (TrueType)"="C:\\windows\\Fonts\\tahoma.ttf"
+"Tahoma Bold (TrueType)"="C:\\windows\\Fonts\\tahomabd.ttf"
 
 [HKEY_LOCAL_MACHINE\Software\Wow6432Node\Microsoft\Windows NT\CurrentVersion\Fonts]
-"Tahoma (TrueType)"=-
-"Tahoma Bold (TrueType)"=-
+"Tahoma (TrueType)"="C:\\windows\\Fonts\\tahoma.ttf"
+"Tahoma Bold (TrueType)"="C:\\windows\\Fonts\\tahomabd.ttf"

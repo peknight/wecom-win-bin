@@ -85,7 +85,7 @@ wecom-win --remote-debugging-port=9222 --remote-allow-origins='*'
 
 启动器里带了几处运行期补丁，细节在 `PITFALLS.md` 和 `PITFALLS-common.md`：
 
-- 输入框汉字方框：写字体替换表，字形来自系统文泉驿微米黑（`PITFALLS.md` 第 9 条）
+- 输入框汉字方框：DirectWrite 走替换表，GDI 的 Tahoma 用文泉驿派生一份带汉字的字体（`PITFALLS.md` 第 9 条）
 - `Industry News` / `Request for use` 等 CEF 弹窗白屏：启动时传
   `--js-flags=--no-freeze-flags-after-init`（`PITFALLS-common.md` 第 12 条）
 - Flutter 页面（Industry News / Bot 面板）掉出主窗口：IFEO 覆盖 DPI 感知

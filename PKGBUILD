@@ -2,7 +2,7 @@
 
 pkgname=wecom-win-bin
 pkgver=5.0.13.6005
-pkgrel=10
+pkgrel=11
 pkgdesc='企业微信 Windows 客户端，基于发行版 wine 11 运行 | Tencent WeCom Windows build on upstream wine'
 arch=('x86_64')
 url='https://work.weixin.qq.com/'
@@ -28,6 +28,7 @@ optdepends=(
 )
 makedepends=(
     'icoutils'
+    'python-fonttools' # 派生带汉字的 Tahoma，给 GDI RichEdit 输入框用
     'mingw-w64-gcc' # 编译打过补丁的 32 位 riched20.dll
     'flex'
     'bison'
@@ -45,6 +46,7 @@ source=(
     "WeCom_${pkgver}.exe::https://dldir1.qq.com/wework/work_weixin/WeCom_${pkgver}.exe"
     "wine-${_winever}.tar.xz::https://dl.winehq.org/wine/source/${_winever%.*}.x/wine-${_winever}.tar.xz"
     'wine-riched20-wecom.patch'
+    'make-tahoma.py'
     'wecom-win.sh'
     'wecom-win.desktop'
     'wecom-win-fonts.reg'
@@ -56,6 +58,7 @@ noextract=("WeCom_${pkgver}.exe")
 sha256sums=(
     '5df50a240038a2de7c3b17e4f25f4747e74d97f9028be9baec6f7379fc97e1be'
     'f172e9c1be73e862057deae1f0e03ce95919986c5df8a18e1c0829c34863c9ee'
+    'SKIP'
     'SKIP'
     'SKIP'
     'SKIP'
@@ -101,6 +104,12 @@ build_riched20() {
 
 build() {
     cd "$srcdir"
+
+    # 输入框（GDI RichEdit）按家族名 Tahoma 取字，而 wine 自带的 tahoma.ttf
+    # 没有汉字；GDI 的 Replacements 又不会覆盖已存在的家族，所以只能让
+    # Tahoma 本身带汉字。DirectWrite 那条路不需要，它有自己的回退链。
+    python make-tahoma.py \
+        '/usr/share/fonts/wenquanyi/wqy-microhei/wqy-microhei.ttc' fonts
 
     build_riched20
 
@@ -151,6 +160,8 @@ package() {
 
     install -Dm644 "$srcdir/WeCom_${pkgver}.exe" "$share/WeCom_${pkgver}.exe"
     install -Dm644 "$srcdir/riched20.dll" "$share/riched20.dll"
+    install -Dm644 "$srcdir/fonts/tahoma.ttf" "$share/fonts/tahoma.ttf"
+    install -Dm644 "$srcdir/fonts/tahomabd.ttf" "$share/fonts/tahomabd.ttf"
     install -Dm755 "$srcdir/no-shaped-systray.so" \
         "$pkgdir/usr/lib/$pkgname/no-shaped-systray.so"
     install -Dm644 "$srcdir/wecom-win-fonts.reg" "$share/wecom-win-fonts.reg"
@@ -168,4 +179,7 @@ package() {
 
     install -d "$pkgdir/usr/share/licenses/$pkgname"
     echo 'https://work.weixin.qq.com/' >"$pkgdir/usr/share/licenses/$pkgname/ToS.txt"
+    # 包内 tahoma.ttf/tahomabd.ttf 是文泉驿微米黑的派生物，附上原字体许可
+    install -Dm644 /usr/share/licenses/wqy-microhei/FONTEXCEPTION \
+        "$pkgdir/usr/share/licenses/$pkgname/FONTEXCEPTION"
 }
