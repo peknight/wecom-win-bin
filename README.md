@@ -31,8 +31,10 @@ makepkg -si
 ```
 
 构建期从官方 exe 里抠图标，再从对应版本的 wine 源码里编一份打过补丁的 32 位
-`riched20.dll`（只编这一个 DLL，半分钟），所以要 `icoutils`、`mingw-w64-gcc`、
-`flex`、`bison`；下载的安装包约 660M，最终包装出约 1.9G。
+`riched20.dll`、一份打过补丁的 64 位 `explorer.exe`（托盘图标闪烁那一帧），
+所以要 `icoutils`、`mingw-w64-gcc`、`flex`、`bison`；下载的安装包约 660M，
+最终包装出约 1.9G。`explorer.exe` 只用到 PE 侧的 shell32 等几个库，首次构建
+要多花几分钟。
 
 ## 首次运行
 
@@ -98,6 +100,8 @@ wecom-win --remote-debugging-port=9222 --remote-allow-origins='*'
   顶出输入框：补丁版 `riched20.dll`（`PITFALLS-common.md` 第 14 条）
 - 托盘图标黑底加边框：`LD_PRELOAD` 拦掉 wine 给托盘窗口设的 bounding shape
   （`PITFALLS.md` 第 11 条）
+- 托盘图标闪烁时图标位置变成纯黑方块：换掉 wine 自带 `explorer.exe`，全透明的
+  一帧按 alpha 处理（`PITFALLS.md` 第 14 条）
 
 ## 已知问题
 

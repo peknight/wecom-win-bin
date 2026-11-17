@@ -378,3 +378,56 @@ Messages / Emails / Document）。
   纠正。这段应用自身的短暂反扑无法靠重绘时序完全消除；能保证的是不再永久
   残留，也不会因补画时机不当产生多次来回闪。
 
+## 14. 托盘图标闪烁时，图标位置变成纯黑方块
+
+**现象**：企业微信收到消息时托盘图标会闪，亮的那一帧正常，暗的那一帧原来
+的图标位置变成一块 16x16 的纯黑色方块，周围 22x22 的窗口区域仍是透明的。
+
+**原因**：在 `programs/explorer/systray.c` 的 `paint_layered_icon` 里，wine 靠
+“扫一遍像素有没有非零 alpha”来判断这张图带不带 alpha 通道：
+
+```c
+for (i = 0, ptr = color_bits; i < size.cx * size.cy; i++)
+    if ((has_alpha = (ptr[i] & 0xff000000) != 0)) break;
+```
+
+企业微信闪烁的隐藏帧是一张 32 位全透明的图，一个非零 alpha 都没有，于是被
+判成“没有 alpha 通道”，掉进 AND mask 分支：建一张 1bpp 掩码、先整体填 0xff，
+再用 `DI_MASK` 把图标画上去。这张图的 AND mask 是全 0（全透明），掩码里没有
+任何一位被清掉，循环里就把**每个**像素的 alpha 都置成 `0xff` 且颜色保持 0，
+结果就是整块不透明黑。真实 Windows 上这张帧就是全透明，看不到任何东西。
+
+实测帧（`XGetImage` 统计托盘窗口 22x22 的像素）：256 个不透明 `#ff000000`
+落在中间 16x16，其余 228 个像素 alpha 为 0，窗口的 bounding shape 是整窗。
+
+**修法**：`wine-explorer-tray-blank.patch` 在 `has_alpha` 判断后面补一条：
+DIB 是 32 位（`GetIconInfo` + `GetObjectW` 看 `bmBitsPixel`）或者是 `NULL`
+图标时，即使一个非零 alpha 都没有，也按“有 alpha 通道”处理。这样全透明帧
+走正常的 `ULW_ALPHA` 路径，窗口内容是真正的 alpha=0，面板合成出来就是透明。
+
+**这个补丁要换掉 wine 自带的 `explorer.exe`**，不是 `riched20` 那种往应用
+目录塞一个 DLL 就完事的做法，原因和落地方式：
+
+- 托盘窗口是 explorer.exe 建的，`paint_layered_icon` 就在它里面，`win32u` /
+  `winex11.drv` 那层拿不到“这张图标有没有 alpha 通道”这个信息；
+- PKGBUILD 里 `build_explorer` 用同一份 wine 源码编 64 位 `explorer.exe`，
+  链接时要去掉 `-Wl,--wine-builtin`（带这个标记的 PE 会被当成 builtin，用
+  `WINEDLLOVERRIDES` 强制 native 加载会以 `c0000135` 失败）；
+- 启动器把它同步到 `<prefix>/drive_c/windows/system32/explorer.exe`，并给
+  `WINEDLLOVERRIDES` 加上 `explorer=n,b`（builtin 兜底）。`wineboot` 建
+  prefix 时会往 system32 放一份 builtin 副本，同步时用“写临时文件再改名”，
+  避免正在运行的 wine 进程映射的旧文件被截断；
+- 同步之后必须让这个 prefix 的 wine 进程全部退出一次（`wineserver -k`），
+  托盘窗口才会由新的 explorer 建出来。
+
+**验证**（`/tmp` 下的 `traytest.exe` + `trackwin`，独立 prefix，
+`WINEDLLOVERRIDES=explorer.exe=n`）：四个阶段（实心 / 全透明+空 mask /
+`NULL` 图标 / 全透明+全 1 mask）来回切，隐藏帧里 `alpha=0` 的像素 484 个、
+不透明黑 0 个，屏幕同一块区域的像素也跟着回到面板底色，不再残留上一帧的
+图标；切回实心帧时 256 个图标像素（`#00c000`）正常回来。
+
+**顺带确认**：`no-shaped-systray.so` 丢掉 bounding shape 之后，隐藏帧的
+重绘不需要额外补一刀。窗口内容变成全透明本身就会让面板重画那一块；早先
+观察到“旧图标留在屏幕上”是 AND mask 画出来的不透明黑导致的，不是合成器
+不重绘。
+

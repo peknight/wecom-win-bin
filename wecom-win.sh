@@ -10,6 +10,7 @@ readonly PKGVER='@PKGVER@'
 readonly APP_ID='@APP_ID@'
 readonly BIN='@BIN@'
 readonly SHARE="/usr/share/${PKGNAME}"
+readonly LIBDIR="/usr/lib/${PKGNAME}"
 readonly WINE_BIN='/usr/bin/wine'
 readonly SETUP_EXE="${SHARE}/WeCom_${PKGVER}.exe"
 readonly FONTS_REG="${SHARE}/wecom-win-fonts.reg"
@@ -90,12 +91,17 @@ setup_wine_env() {
 	#
 	# riched20 是我们自己编的补丁版（支持把剪贴板图片粘进输入框），
 	# 由 apply_wine_dlls 放进应用目录；同样留 builtin 兜底。
-	export WINEDLLOVERRIDES='concrt140=n,b;riched20=n,b'
+	#
+	# explorer 也是自己编的补丁版（托盘图标闪烁时不再出现纯黑方块），
+	# 由 apply_wine_dlls 放进 prefix 的 system32；同样留 builtin 兜底。
+	# exe 的 override 键要带扩展名，写成 explorer=n 不生效（workbuddy-win-bin
+	# 那边也是 explorer.exe=n）。
+	export WINEDLLOVERRIDES='concrt140=n,b;riched20=n,b;explorer.exe=n,b'
 
 	# 托盘图标黑底：wine 会给托盘窗口设 bounding shape，Xfce panel 合成这个
 	# socket 时把 shape 圈住的区域整块填黑。这个小库在 wine 进程里拦掉那次
 	# shape 设置（只在有合成器时），ShapeInput 不动，点击穿透照旧。
-	local noshape="/usr/lib/${PKGNAME}/no-shaped-systray.so"
+	local noshape="${LIBDIR}/no-shaped-systray.so"
 	if [[ -f ${noshape} ]]; then
 		export LD_PRELOAD="${noshape}${LD_PRELOAD:+:${LD_PRELOAD}}"
 	fi
@@ -143,6 +149,8 @@ apply_dpi_compat() {
 apply_wine_dlls() {
 	local app_dir="${WINEPREFIX}/drive_c/${WIN_APP_DIR}"
 	local dll="${SHARE}/riched20.dll"
+	local explorer="${LIBDIR}/explorer.exe"
+	local system32="${WINEPREFIX}/drive_c/windows/system32"
 
 	# 调试期要往 prefix 里塞实验 DLL 时跳过同步，免得一重启就被包里那份覆盖
 	[[ ${WECOM_WIN_SKIP_DLL_SYNC:-0} == 1 ]] && return
@@ -151,6 +159,17 @@ apply_wine_dlls() {
 	if ! cmp -s "${dll}" "${app_dir}/riched20.dll"; then
 		install -Dm644 "${dll}" "${app_dir}/riched20.dll"
 		message "riched20 补丁已更新（剪贴板图片粘贴）"
+	fi
+
+	# wineboot 会在 prefix 的 system32 里放一份 builtin explorer.exe 的副本，
+	# 换成打过补丁的那份。带 builtin 签名的 PE 没法按 native 加载，包里那份
+	# 是重链去掉签名的，见 PKGBUILD 的 build_explorer。
+	if [[ -f ${explorer} ]] && ! cmp -s "${explorer}" "${system32}/explorer.exe"; then
+		# 先写临时文件再改名：正在运行的 wine 进程还映射着旧文件，原地截断
+		# 会让它读到的页面变成空洞。
+		install -Dm755 "${explorer}" "${system32}/explorer.exe.new"
+		mv -f "${system32}/explorer.exe.new" "${system32}/explorer.exe"
+		message "explorer 补丁已更新（托盘图标闪烁不再变黑方块）"
 	fi
 }
 

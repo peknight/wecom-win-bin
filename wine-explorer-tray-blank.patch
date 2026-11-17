@@ -1,0 +1,38 @@
+--- a/programs/explorer/systray.c	2026-11-17 10:28:30.039068918 +0800
++++ b/programs/explorer/systray.c	2026-11-17 10:28:34.599632441 +0800
+@@ -385,6 +385,21 @@
+     if (balloon_icon == icon) set_balloon_position( icon );
+ }
+ 
++/* 32 位图标自带 alpha 通道，透明与否以 alpha 为准。 */
++static BOOL icon_has_alpha_channel( HICON handle )
++{
++    ICONINFO info;
++    BITMAP bm;
++    BOOL ret = FALSE;
++
++    if (!GetIconInfo( handle, &info )) return FALSE;
++    if (info.hbmColor && GetObjectW( info.hbmColor, sizeof(bm), &bm ))
++        ret = bm.bmBitsPixel == 32;
++    if (info.hbmColor) DeleteObject( info.hbmColor );
++    if (info.hbmMask) DeleteObject( info.hbmMask );
++    return ret;
++}
++
+ static void paint_layered_icon( struct icon *icon )
+ {
+     BLENDFUNCTION blend = {AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
+@@ -424,6 +439,13 @@
+     for (i = 0, ptr = color_bits; i < size.cx * size.cy; i++)
+         if ((has_alpha = (ptr[i] & 0xff000000) != 0)) break;
+ 
++    /* 全透明的 32 位图标（企业微信收到消息时的闪烁隐藏帧）和不带图标的
++     * 瞬时状态，alpha 全 0 是真的透明，不是"这张图没有 alpha 通道"。
++     * 落到下面的 AND mask 分支时，空 mask 会被当成全部不透明，画成纯黑
++     * 方块。这里按 alpha 通道处理，和 Windows 上的行为一致。 */
++    if (!has_alpha && (!icon->image || icon_has_alpha_channel( icon->image )))
++        has_alpha = TRUE;
++
+     if (!has_alpha)
+     {
+         unsigned int width_bytes = (size.cx + 31) / 32 * 4;

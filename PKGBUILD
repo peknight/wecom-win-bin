@@ -2,7 +2,7 @@
 
 pkgname=wecom-win-bin
 pkgver=5.0.13.6005
-pkgrel=18
+pkgrel=19
 pkgdesc='企业微信 Windows 客户端，基于发行版 wine 11 运行 | Tencent WeCom Windows build on upstream wine'
 arch=('x86_64')
 url='https://work.weixin.qq.com/'
@@ -47,6 +47,7 @@ source=(
     "WeCom_${pkgver}.exe::https://dldir1.qq.com/wework/work_weixin/WeCom_${pkgver}.exe"
     "wine-${_winever}.tar.xz::https://dl.winehq.org/wine/source/${_winever%.*}.x/wine-${_winever}.tar.xz"
     'wine-riched20-wecom.patch'
+    'wine-explorer-tray-blank.patch'
     'make-tahoma.py'
     'wecom-win.sh'
     'wecom-win.desktop'
@@ -60,6 +61,7 @@ noextract=("WeCom_${pkgver}.exe")
 sha256sums=(
     '5df50a240038a2de7c3b17e4f25f4747e74d97f9028be9baec6f7379fc97e1be'
     'f172e9c1be73e862057deae1f0e03ce95919986c5df8a18e1c0829c34863c9ee'
+    'SKIP'
     'SKIP'
     'SKIP'
     'SKIP'
@@ -84,7 +86,7 @@ build_riched20() {
     # 只编 32 位；把 X11、音频、网络这些运行期的依赖全关掉，只求能把
     # riched20 编出来，整条链路半分钟左右
     "$srcdir/wine-${_winever}/configure" \
-        --enable-archs=i386 \
+        --enable-archs=i386,x86_64 \
         --without-x --without-freetype --without-fontconfig \
         --without-gnutls --without-cups --without-dbus --without-udev \
         --without-sane --without-pulse --without-alsa --without-oss \
@@ -105,6 +107,28 @@ build_riched20() {
     head -c 32 /dev/zero | dd of="$srcdir/riched20.dll" bs=1 seek="$offset" conv=notrunc status=none
 }
 
+# 托盘图标闪烁时，隐藏的那一帧在 wine 里被画成纯黑方块：explorer 的 systray
+# 靠扫描像素 alpha 判断图标有没有 alpha 通道，全透明的一帧一个非零 alpha 都
+# 没有，就被当成"没有 alpha 通道"，退回 AND mask 画法；而这张图的 mask 全 0，
+# AND 的结果是整块不透明。补丁改成按 DIB 位数判断有没有 alpha 通道，全透明
+# 就真的透明。详见 PITFALLS.md 第 14 条。
+build_explorer() {
+    cd "$srcdir/wine-${_winever}"
+    grep -q icon_has_alpha_channel programs/explorer/systray.c ||
+        patch -Np1 -i "$srcdir/wine-explorer-tray-blank.patch"
+
+    cd "$srcdir/wine-build"
+    # 顶层 Makefile 给 explorer 的链接命令带了 -Wl,--wine-builtin（给 wine 自己
+    # 的安装目录用）。带这个标记的 PE 会被当成 builtin，用 WINEDLLOVERRIDES
+    # 强制 native 加载会以 c0000135 失败，所以重链一次去掉它。
+    sed -i '/-mwindows -municode programs\/explorer\// s/ -Wl,--wine-builtin//' Makefile
+    make -j"$(nproc)" programs/explorer/x86_64-windows/explorer.exe
+
+    install -Dm755 programs/explorer/x86_64-windows/explorer.exe "$srcdir/explorer.exe"
+    # 1M 里大半是调试信息
+    x86_64-w64-mingw32-strip -s "$srcdir/explorer.exe"
+}
+
 build() {
     cd "$srcdir"
 
@@ -115,6 +139,7 @@ build() {
         '/usr/share/fonts/wenquanyi/wqy-microhei/wqy-microhei.ttc' fonts
 
     build_riched20
+    build_explorer
 
     # build_riched20 结束时停在 $srcdir/wine-build，不回 $srcdir 的话
     # 下面的 wrestool 会在空目录里找不到 exe，图标就被静默跳过了。
@@ -172,6 +197,8 @@ package() {
     install -Dm644 "$srcdir/fonts/tahomabd.ttf" "$share/fonts/tahomabd.ttf"
     install -Dm755 "$srcdir/no-shaped-systray.so" \
         "$pkgdir/usr/lib/$pkgname/no-shaped-systray.so"
+    install -Dm755 "$srcdir/explorer.exe" \
+        "$pkgdir/usr/lib/$pkgname/explorer.exe"
     install -Dm644 "$srcdir/wecom-repaint-watch.exe" "$share/wecom-repaint-watch.exe"
     install -Dm644 "$srcdir/wecom-win-fonts.reg" "$share/wecom-win-fonts.reg"
     install -Dm644 "$srcdir/wecom-win-protocols.reg" "$share/wecom-win-protocols.reg"
