@@ -11,7 +11,9 @@ readonly APP_ID='@APP_ID@'
 readonly BIN='@BIN@'
 readonly SHARE="/usr/share/${PKGNAME}"
 readonly LIBDIR="/usr/lib/${PKGNAME}"
-readonly WINE_BIN='/usr/bin/wine'
+# 补丁版 wine 的包装器：在只属于本次启动的挂载命名空间里换上 winex11，
+# 系统 /usr/lib/wine 和 prefix 都不改写。见 wine-fix 仓库。
+readonly WINE_BIN='/usr/bin/wine-fix-run'
 readonly SETUP_EXE="${SHARE}/WeCom_${PKGVER}.exe"
 readonly FONTS_REG="${SHARE}/wecom-win-fonts.reg"
 readonly PROTOCOLS_REG="${SHARE}/wecom-win-protocols.reg"
@@ -84,6 +86,11 @@ setup_wine_env() {
 	export LANGUAGE="${app_locale%%.*}"
 	export LC_ALL="$app_locale"
 	export WINEDEBUG='-all'
+	# wine-fix 里只吃 winex11（输入法候选框跟随光标）：它下面三份补丁里，
+	# explorer 是本包自己编的（PITFALLS.md 第 14 条），wine-fix 那份会盖掉它；
+	# imm32 和 explorer 在 wine-fix 里只有 x86_64 版本，而本 prefix 跑的是 32
+	# 位程序，挂了也不生效。两项显式关掉，wine-fix-status 的输出才不误导人。
+	export WINE_FIX_DISABLE='explorer,imm32'
 	# 融合会议 wwmapp.exe 会构造 MSVC 并发库的 _TaskCollection，wine 自带的
 	# concrt140.dll 到 11.22 仍是 stub，调用即 EXCEPTION_WINE_STUB 中止，表现为
 	# “加入快速会议”转圈后进程闪退。优先加载企业微信自带目录里的原生 concrt140；

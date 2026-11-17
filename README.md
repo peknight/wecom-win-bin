@@ -81,8 +81,11 @@ wecom-win --remote-debugging-port=9222 --remote-allow-origins='*'
 
 ## 依赖关系
 
-只依赖发行版 `wine`（>= 11.21）和字体、图标这类基础件。不再依赖
-`deepin-wine10-stable`、`spark-dwine-helper` 或 `com.qq.weixin.work.deepin`。
+依赖 `wine-fix`（它自己拉发行版 `wine` >= 11.22）和字体、图标这类基础件。
+启动器走 `wine-fix-run`，但只取其中的 winex11 补丁：`WINE_FIX_DISABLE`
+关掉了 `explorer` 和 `imm32`，前者本包有自己的补丁版，后者只对 64 位程序
+有产物、本 prefix 是 32 位。不再依赖 `deepin-wine10-stable`、
+`spark-dwine-helper` 或 `com.qq.weixin.work.deepin`。
 
 ## 已经处理掉的坑
 
@@ -102,6 +105,8 @@ wecom-win --remote-debugging-port=9222 --remote-allow-origins='*'
   （`PITFALLS.md` 第 11 条）
 - 托盘图标闪烁时图标位置变成纯黑方块：换掉 wine 自带 `explorer.exe`，全透明的
   一帧按 alpha 处理（`PITFALLS.md` 第 14 条）
+- 输入法候选框贴在窗口左下角、不跟随光标：`wine-fix-run` 挂上放宽了 XIM spot
+  判断的 `winex11.so`（`PITFALLS.md` 第 15 条）
 
 ## 已知问题
 

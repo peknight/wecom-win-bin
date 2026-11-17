@@ -2,7 +2,7 @@
 
 pkgname=wecom-win-bin
 pkgver=5.0.13.6005
-pkgrel=19
+pkgrel=20
 pkgdesc='企业微信 Windows 客户端，基于发行版 wine 11 运行 | Tencent WeCom Windows build on upstream wine'
 arch=('x86_64')
 url='https://work.weixin.qq.com/'
@@ -16,7 +16,7 @@ conflicts=('wecom-win11-bin')
 replaces=('wecom-win11-bin')
 
 depends=(
-    'wine>=11.21'
+    'wine-fix'      # 按进程挂载的 wine 补丁，目前只用到 winex11 那份（XIM 光标位置）
     'fontconfig'
     'hicolor-icon-theme'
     'libx11'        # 托盘图标修复用的 LD_PRELOAD 小库

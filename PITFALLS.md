@@ -431,3 +431,27 @@ DIB 是 32 位（`GetIconInfo` + `GetObjectW` 看 `bmBitsPixel`）或者是 `NUL
 观察到“旧图标留在屏幕上”是 AND mask 画出来的不透明黑导致的，不是合成器
 不重绘。
 
+## 15. 输入法候选框贴在窗口左下角，不跟随光标
+
+**现象**：中文能打，但候选窗固定在企业微信窗口的左下角，横坐标等于窗口左边、
+纵坐标等于窗口底边，光标换行也不动。
+
+**原因**：Wine 用 `XIMPreeditCallbacks` 风格建 XIC，而
+`X11DRV_SetIMECompositionRect()` 只在 `XIMPreeditPosition` 风格下才把
+`XNSpotLocation` 转发给输入法，callbacks 风格直接 `return FALSE`。XIC 创建时
+spot 是 `{0, 0}`（`dlls/winex11.drv/xim.c` 的 `xic_create`），此后一直没人更新，
+ibus 只能把候选窗摆在窗口原点。
+
+ibus 重启时 Wine 通过 `XIMInstantiateCallback` 重建 XIC，位置又回到 `{0, 0}`，
+所以「重启过输入法之后候选框突然跑左下角」是这条坑的典型触发方式，跟 wine
+包本身升没升级无关。
+
+**结论**：启动器改用 `wine-fix-run`，它把放宽了这处判断的 `winex11.so` 挂进
+只属于本次启动的挂载命名空间，系统的 `/usr/lib/wine` 不动。同一份补丁还会在
+组字时向应用查 `IMR_QUERYCHARPOSITION`，spot 落到光标行底，候选窗不会压住正在
+输入的那一行。
+
+**注意**：`wine-fix` 里的 `explorer` 和 `imm32` 对本包不适用（前者本包有自己的
+补丁版，后者只有 64 位产物而本 prefix 跑 32 位程序），启动器用
+`WINE_FIX_DISABLE='explorer,imm32'` 显式关掉。
+
