@@ -178,6 +178,25 @@ apply_wine_dlls() {
 		mv -f "${system32}/explorer.exe.new" "${system32}/explorer.exe"
 		message "explorer 补丁已更新（托盘图标闪烁不再变黑方块）"
 	fi
+
+	# 融合会议的 wemeet_platform.dll 从 SLWGA.dll（Windows 正版校验）导入
+	# SLIsGenuineLocal，wine 没有这个 DLL。缺了它 WeMeet 那一整条模块链会
+	# 以 c0000135 连锁加载失败，表现为"加入快速会议"转完圈没反应。
+	# 放 system32 而不是企业微信自己的安装目录：loader 默认搜得到，也避开
+	# 企业微信每次启动的文件自检。注意 WoW64 prefix 里 32 位进程看到的
+	# System32 实际是 syswow64，存根得落到那边才会被搜到。
+	local slwga="${SHARE}/SLWGA.dll"
+	local slwga_dir="${WINEPREFIX}/drive_c/windows/system32"
+
+	if [[ -d ${WINEPREFIX}/drive_c/windows/syswow64 ]]; then
+		slwga_dir="${WINEPREFIX}/drive_c/windows/syswow64"
+	fi
+
+	if [[ -f ${slwga} ]] && ! cmp -s "${slwga}" "${slwga_dir}/SLWGA.dll"; then
+		install -Dm644 "${slwga}" "${slwga_dir}/SLWGA.dll.new"
+		mv -f "${slwga_dir}/SLWGA.dll.new" "${slwga_dir}/SLWGA.dll"
+		message "SLWGA 存根已更新（融合会议可加载）"
+	fi
 }
 
 ensure_prefix() {

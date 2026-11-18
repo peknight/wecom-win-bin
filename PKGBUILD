@@ -2,7 +2,7 @@
 
 pkgname=wecom-win-bin
 pkgver=5.0.13.6005
-pkgrel=20
+pkgrel=21
 pkgdesc='企业微信 Windows 客户端，基于发行版 wine 11 运行 | Tencent WeCom Windows build on upstream wine'
 arch=('x86_64')
 url='https://work.weixin.qq.com/'
@@ -56,11 +56,15 @@ source=(
     'wecom-win-dpi.reg'
     'no-shaped-systray.c'
     'wecom-repaint-watch.c'
+    'slwga.c'
+    'slwga.def'
 )
 noextract=("WeCom_${pkgver}.exe")
 sha256sums=(
     '5df50a240038a2de7c3b17e4f25f4747e74d97f9028be9baec6f7379fc97e1be'
     'f172e9c1be73e862057deae1f0e03ce95919986c5df8a18e1c0829c34863c9ee'
+    'SKIP'
+    'SKIP'
     'SKIP'
     'SKIP'
     'SKIP'
@@ -155,6 +159,11 @@ build() {
     x86_64-w64-mingw32-gcc -O2 -s -mwindows -Wall -Wextra \
         -o wecom-repaint-watch.exe wecom-repaint-watch.c
 
+    # 融合会议加载链上的 SLWGA.dll（Windows 正版校验）存根，
+    # 32 位、导出名不能带 @12 修饰。见 slwga.c 开头
+    i686-w64-mingw32-gcc -shared -O2 -s -nostartfiles \
+        -o SLWGA.dll slwga.c slwga.def
+
     # 图标只是锦上添花，抠不出来不该让整个构建失败
     mkdir -p icons
     # exe 里只有一个 1033/103 图标组，显式指定，免得 wrestool 挑错资源
@@ -200,6 +209,7 @@ package() {
     install -Dm755 "$srcdir/explorer.exe" \
         "$pkgdir/usr/lib/$pkgname/explorer.exe"
     install -Dm644 "$srcdir/wecom-repaint-watch.exe" "$share/wecom-repaint-watch.exe"
+    install -Dm644 "$srcdir/SLWGA.dll" "$share/SLWGA.dll"
     install -Dm644 "$srcdir/wecom-win-fonts.reg" "$share/wecom-win-fonts.reg"
     install -Dm644 "$srcdir/wecom-win-protocols.reg" "$share/wecom-win-protocols.reg"
     install -Dm644 "$srcdir/wecom-win-dpi.reg" "$share/wecom-win-dpi.reg"

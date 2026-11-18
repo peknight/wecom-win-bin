@@ -455,3 +455,36 @@ ibus 重启时 Wine 通过 `XIMInstantiateCallback` 重建 XIC，位置又回到
 补丁版，后者只有 64 位产物而本 prefix 跑 32 位程序），启动器用
 `WINE_FIX_DISABLE='explorer,imm32'` 显式关掉。
 
+## 16. 缺 `SLWGA.dll`，「加入快速会议」转完圈没反应
+
+**现象**：点「加入快速会议」，转圈一会儿就没了，会议窗口不出现；WXWork 本体
+一切正常，`Log/wwmapp/` 下会多出一个 0 字节的 `luancher_<日期>.log`（日志本体
+是加密的，看不出内容）。
+
+**原因**：融合会议（`WXWork/<ver>/WeMeet/<ver>/wwmapp.exe`）的
+`wemeet_platform.dll` 从 `SLWGA.dll` 导入 `SLIsGenuineLocal`，那是 Windows
+正版校验的接口。wine 至今没实现 slwga，而 deepin-wine 自带一份假 DLL，所以
+deb 线路能进会议。缺了它以后是整条链子连锁失败，`WINEDEBUG=+module` 里能看到：
+
+```
+wemeet_platform.dll 缺 SLWGA.dll
+  -> wemeet_module_api.dll 加载失败
+  -> qt_util.dll / qt_uikit.dll / qt_ui_framework.dll 加载失败
+  -> wemeet_framework.dll / wemeet.dll 加载失败
+  -> wwmapp.exe 起不来，上层只能表现为转圈结束
+```
+
+中间那串 "import_dll ... not found" 全是连锁反应，只盯着第一个报错容易误判。
+另外 `qt_util.dll` 报 `wemeet_module_api.dll not found` 时，这两个文件其实都
+在目录里，只是其中一个的依赖挂了，wine 同样报 "not found"。
+
+**结论**：包内附 `slwga.c` 编出的 32 位存根，`SLIsGenuineLocal` 直接返回
+`S_OK` 且 `SL_GENUINE_STATE = 0`（正版），由启动器同步到 prefix 的
+`system32/SLWGA.dll`。放 system32 而不是企业微信安装目录，一是 loader 默认
+搜得到，二是不碰企业微信每次启动的文件自检。
+
+**排查手法**：手工按启动器同样的环境单独跑
+`wine-fix-run '5.0.13.6005/WeMeet/<ver>/wwmapp.exe'`，stderr 会直接把
+`err:module:import_dll` 打出来；再加 `WINEDEBUG=+module` 能看到
+`Failed to load module ...; status=c0000135` 的完整链条。
+
