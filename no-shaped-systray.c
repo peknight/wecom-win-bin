@@ -33,11 +33,43 @@
 static void (*real_shape_mask)(Display *, Window, int, int, int, Pixmap, int);
 static void (*real_shape_rects)(Display *, Window, int, int, int, XRectangle *, int, int, int);
 
+static void *open_xext(void)
+{
+	void *handle = dlopen("libXext.so.6", RTLD_NOW | RTLD_NOLOAD);
+
+	if (handle == NULL) {
+		handle = dlopen("libXext.so.6", RTLD_NOW | RTLD_LOCAL);
+	}
+	return handle;
+}
+
+static void *resolve_shape_symbol(void *handle, const char *name)
+{
+	void *symbol = NULL;
+
+	if (handle != NULL) {
+		symbol = dlsym(handle, name);
+	}
+	if (symbol == NULL) {
+		symbol = dlsym(RTLD_DEFAULT, name);
+	}
+	if (symbol == NULL) {
+		symbol = dlsym(RTLD_NEXT, name);
+	}
+	return symbol;
+}
+
 __attribute__((constructor))
 static void load_real_symbols(void)
 {
-	real_shape_mask = dlsym(RTLD_NEXT, "XShapeCombineMask");
-	real_shape_rects = dlsym(RTLD_NEXT, "XShapeCombineRectangles");
+	void *xext = open_xext();
+
+	real_shape_mask = resolve_shape_symbol(xext, "XShapeCombineMask");
+	real_shape_rects = resolve_shape_symbol(xext, "XShapeCombineRectangles");
+	if (real_shape_mask == NULL || real_shape_rects == NULL) {
+		fprintf(stderr, "no-shaped-systray: cannot resolve XShape symbols; "
+			"shape calls would be dropped\n");
+	}
 }
 
 static void debug_log(const char *what, Window win)
